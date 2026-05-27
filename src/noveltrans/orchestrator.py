@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from threading import Lock
 
-from .glossary import GlossaryManager
+from .glossary import GlossaryManager, is_pending_auto_seed
 from .errors import TranslationError
 from .models import EpisodeText, ParallelOptions, QAIssue, QualityOptions, Section, TranslationOptions, TranslationResult
 from .project import Project
@@ -321,7 +321,7 @@ class TranslationOrchestrator:
         glossary = [
             entry
             for entry in self.glossary.snapshot(limit=10_000)
-            if entry.source and entry.target and not _is_pending_auto_seed(entry)
+            if entry.source and entry.target and not is_pending_auto_seed(entry)
         ]
         for source_episode in self.project.list_source_episodes():
             translated_path = self.project.translation_path(source_episode.episode_no)
@@ -402,12 +402,4 @@ def _merge_translation_results(episode: EpisodeText, parts: list[TranslationResu
         episode_summary="\n".join(part.episode_summary for part in parts if part.episode_summary),
         qa_notes=[note for part in parts for note in part.qa_notes],
         raw_response={"chunks": [part.raw_response for part in parts]},
-    )
-
-
-def _is_pending_auto_seed(entry: object) -> bool:
-    return (
-        getattr(entry, "locked", False) is False
-        and getattr(entry, "target", "") == getattr(entry, "source", None)
-        and "auto-seeded" in getattr(entry, "notes", "")
     )

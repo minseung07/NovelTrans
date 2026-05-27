@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from .glossary import is_pending_auto_seed
 from .models import EpisodeText, GlossaryEntry, QAIssue, TranslationResult
 from .utils import paragraph_count
 
@@ -98,7 +99,7 @@ class QAEngine:
 
         if check_term_consistency:
             for entry in glossary:
-                if _is_pending_auto_seed(entry):
+                if is_pending_auto_seed(entry):
                     continue
                 if entry.source in source_text and entry.target and entry.target not in translated:
                     issues.append(
@@ -140,10 +141,6 @@ class QAEngine:
                     )
                 )
         return issues
-
-
-def _is_pending_auto_seed(entry: GlossaryEntry) -> bool:
-    return not entry.locked and entry.target == entry.source and "auto-seeded" in entry.notes
 
 
 def _target_variant_matches(translated: str, target: str) -> list[str]:

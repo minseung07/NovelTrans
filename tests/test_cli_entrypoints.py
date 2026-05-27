@@ -23,12 +23,47 @@ class CLIEntrypointTests(unittest.TestCase):
             self.assertEqual(main(["--classic"]), 78)
         classic.assert_called_once_with()
 
-    def test_textual_flag_launches_textual_ui(self) -> None:
-        from noveltrans.cli import main
+    def test_classic_helpers_offer_guided_episode_and_format_choices(self) -> None:
+        from noveltrans.cli import _choose_episode_spec, _choose_formats
 
-        with patch("noveltrans.cli._run_textual_ui", return_value=79) as textual:
-            self.assertEqual(main(["--textual"]), 79)
-        textual.assert_called_once_with()
+        with patch("builtins.input", side_effect=["3", "2", "6"]):
+            self.assertEqual(_choose_episode_spec("번역할 화수 범위"), "2-6")
+
+        with patch("builtins.input", side_effect=["1,3"]):
+            self.assertEqual(_choose_formats(), ["txt", "epub"])
+
+    def test_classic_model_choice_can_use_default_without_typing_model_name(self) -> None:
+        from noveltrans.cli import _choose_model
+
+        with patch("builtins.input", side_effect=[""]):
+            self.assertEqual(_choose_model("gpt-5.5"), "gpt-5.5")
+
+    def test_wizard_back_key_is_user_facing_navigation(self) -> None:
+        from noveltrans.wizard import BackRequested, Choice, TerminalPrompt
+
+        prompt = TerminalPrompt()
+        prompt.interactive = False
+        with patch("builtins.input", side_effect=["b"]):
+            with self.assertRaises(BackRequested):
+                prompt.select("선택", [Choice("하나", "one")])
+
+    def test_new_project_draft_uses_settings_defaults(self) -> None:
+        from noveltrans.config import AppConfig
+        from noveltrans.wizard import _new_project_draft_from_config
+
+        draft = _new_project_draft_from_config(
+            AppConfig(
+                default_model="custom-model",
+                default_translation_backend="codex",
+                default_parallel_episodes=2,
+                watermark="wm",
+            )
+        )
+
+        self.assertEqual(draft.translation.model, "custom-model")
+        self.assertEqual(draft.translation.backend, "codex")
+        self.assertEqual(draft.parallel.max_parallel_episodes, 2)
+        self.assertEqual(draft.export.watermark, "wm")
 
 
 if __name__ == "__main__":

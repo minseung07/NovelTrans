@@ -21,6 +21,7 @@ from noveltrans.errors import ConfigurationError, ProjectError, SourceInputError
 from noveltrans.exporters import Exporter
 from noveltrans.cli import main
 from noveltrans.models import GlossaryEntry, TranslationResult
+from noveltrans.progress import format_progress_line, snapshot_project_progress, target_episode_numbers
 from noveltrans.translator import Translator
 from noveltrans.workflow import (
     add_source_episodes_from_local_file,
@@ -97,6 +98,56 @@ class WorkflowExportTests(unittest.TestCase):
             self.assertEqual({path.suffix for path in second_outputs}, {".txt", ".docx", ".epub"})
             self.assertEqual(estimate_project_translation(project, resume=True).episode_count, 0)
             self.assertEqual(estimate_project_translation(project, resume=True).estimated_total_tokens, 0)
+
+    def test_progress_snapshot_reports_pending_and_completed_ranges(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "progress.txt"
+            source.write_text("# 第1話\n本文一。\n\n# 第2話\n本文二。\n\n# 第3話\n本文三。", encoding="utf-8")
+            project = create_project_from_local_file(
+                manager=ProjectManager(root / "projects"),
+                name="progress",
+                input_path=source,
+                translation=TranslationOptions(model="gpt-5.5"),
+                parallel=ParallelOptions(max_parallel_episodes=1),
+                quality=QualityOptions(),
+                export=ExportOptions(formats=["txt"]),
+            )
+
+            targets = target_episode_numbers(project, resume=False)
+            snapshot = snapshot_project_progress(project, targets)
+
+            self.assertEqual(targets, [1, 2, 3])
+            self.assertEqual(snapshot.pending, [1, 2, 3])
+            self.assertIn("대기 1-3", format_progress_line(snapshot))
+
+            run_translation_and_export(project, dry_run=True, resume=False)
+            completed = snapshot_project_progress(project, targets)
+
+            self.assertEqual(completed.completed, [1, 2, 3])
+            self.assertEqual(target_episode_numbers(project, resume=True), [])
+
+    def test_pending_auto_seeded_glossary_entries_are_not_exported_as_japanese_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "pending_terms.txt"
+            source.write_text("# 第1話\n王都アルフェン。王都アルフェン。", encoding="utf-8")
+            project = create_project_from_local_file(
+                manager=ProjectManager(root / "projects"),
+                name="pending_terms",
+                input_path=source,
+                translation=TranslationOptions(model="gpt-5.5"),
+                parallel=ParallelOptions(max_parallel_episodes=1),
+                quality=QualityOptions(),
+                export=ExportOptions(formats=["txt"]),
+            )
+
+            run_translation_and_export(project, dry_run=True, resume=False)
+            glossary_text = (project.glossary_dir / "glossary.json").read_text(encoding="utf-8")
+            export_text = (project.exports_dir / "pending_terms.txt").read_text(encoding="utf-8")
+
+            self.assertIn('"target": ""', glossary_text)
+            self.assertNotIn("王都アルフェン -> 王都アルフェン", export_text)
 
     def test_run_local_command_uses_codex_backend_without_openai_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

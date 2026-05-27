@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 
 from .errors import ConfigurationError, ProjectError
-from .glossary import GlossaryManager
+from .glossary import GlossaryManager, is_pending_auto_seed
 from .models import ProjectManifest
 from .project import Project
 from .utils import atomic_write_text, escape_xml, now_iso
@@ -264,7 +264,10 @@ def _is_author_note_heading(heading: str) -> bool:
 def _glossary_lines(project: Project) -> list[str]:
     manager = GlossaryManager(project.glossary_dir)
     lines = ["", "용어집"]
-    for entry in manager.snapshot(limit=500):
+    entries = [entry for entry in manager.snapshot(limit=500) if not is_pending_auto_seed(entry)]
+    if not entries:
+        lines.append("- 확정된 용어가 아직 없습니다.")
+    for entry in entries:
         lines.append(f"- {entry.source} -> {entry.target} ({entry.type}, confidence={entry.confidence:.2f})")
     return lines
 
@@ -272,7 +275,10 @@ def _glossary_lines(project: Project) -> list[str]:
 def _glossary_xhtml(project: Project) -> str:
     lines = ["<h1>용어집</h1>"]
     manager = GlossaryManager(project.glossary_dir)
-    for entry in manager.snapshot(limit=500):
+    entries = [entry for entry in manager.snapshot(limit=500) if not is_pending_auto_seed(entry)]
+    if not entries:
+        lines.append("<p>확정된 용어가 아직 없습니다.</p>")
+    for entry in entries:
         lines.append(
             f"<p><b>{escape_xml(entry.source)}</b> -> {escape_xml(entry.target)} "
             f"({escape_xml(entry.type)}, {entry.confidence:.2f})</p>"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
+from .glossary import is_pending_auto_seed
 from .models import EpisodeText, GlossaryEntry, TranslationOptions
 
 
@@ -94,7 +95,7 @@ def build_episode_payload(
 
 def _glossary_payload(entry: GlossaryEntry) -> dict[str, object]:
     payload = asdict(entry)
-    if not entry.locked and entry.target == entry.source and "auto-seeded" in entry.notes:
+    if is_pending_auto_seed(entry):
         payload["target"] = ""
         payload["notes"] = f"{entry.notes}; target pending, propose a natural Korean translation"
     return payload

@@ -80,6 +80,15 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             self.assertEqual(store.get_access_token(), "oauth-test")
             self.assertNotIn("oauth-test", store.access_token_path.read_text(encoding="utf-8"))
 
+    def test_credential_store_ignores_obviously_malformed_saved_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = CredentialStore(Path(tmp))
+            store._set_keyring_secret = lambda username, secret: False  # type: ignore[method-assign]
+            store._get_keyring_secret = lambda username: ""  # type: ignore[method-assign]
+            store._write_local_secret(",", store.access_token_path)
+
+            self.assertEqual(store.get_access_token(), "")
+
     def test_auth_command_manages_credentials_without_printing_secret(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp)
@@ -136,6 +145,12 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
                 code = main(["auth", "set-access-token", "--config-dir", tmp, "--from-stdin"])
             self.assertEqual(code, 1)
             self.assertIn("empty", error.getvalue())
+
+            error = StringIO()
+            with redirect_stderr(error), patch("sys.stdin", StringIO(",\n")):
+                code = main(["auth", "set-access-token", "--config-dir", tmp, "--from-stdin"])
+            self.assertEqual(code, 1)
+            self.assertIn("malformed", error.getvalue())
 
     def test_auth_command_reports_codex_status_and_login(self) -> None:
         class FakeCodex:
@@ -278,6 +293,7 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             )
             seeded = manager.seed_from_episodes([episode])
             self.assertTrue(any(entry.source == "王都アルフェン" for entry in seeded))
+            self.assertEqual(manager.entries["王都アルフェン"].target, "")
             conflicts = manager.update_from_terms(
                 [GlossaryEntry(source="王都アルフェン", target="왕도 알펜", confidence=0.99)]
             )
@@ -299,7 +315,7 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             [
                 GlossaryEntry(
                     source="王都アルフェン",
-                    target="王都アルフェン",
+                    target="",
                     confidence=0.7,
                     notes="auto-seeded from repeated source terms",
                 )
@@ -534,7 +550,7 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             [
                 GlossaryEntry(
                     source="王都アルフェン",
-                    target="王都アルフェン",
+                    target="",
                     notes="auto-seeded from repeated source terms",
                 )
             ],

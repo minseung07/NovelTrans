@@ -31,6 +31,8 @@ class GlossaryManager:
         self.entries.clear()
         for payload in read_json(self.path, default=[]) or []:
             entry = GlossaryEntry(**payload)
+            if is_pending_auto_seed(entry):
+                entry.target = ""
             self.entries[entry.source] = entry
         for payload in read_json(self.locked_path, default=[]) or []:
             entry = GlossaryEntry(**payload)
@@ -61,7 +63,7 @@ class GlossaryManager:
                     continue
                 entry = GlossaryEntry(
                     source=source,
-                    target=source,
+                    target="",
                     type=_guess_term_type(source),
                     confidence=min(0.9, 0.45 + count * 0.05),
                     locked=False,
@@ -91,7 +93,7 @@ class GlossaryManager:
                 existing = self.entries.get(term.source)
                 if existing:
                     if existing.target != term.target:
-                        if _is_pending_auto_seed(existing):
+                        if is_pending_auto_seed(existing):
                             existing.target = term.target
                             existing.type = term.type or existing.type
                             existing.confidence = max(existing.confidence, term.confidence)
@@ -183,5 +185,12 @@ def _guess_term_type(term: str) -> str:
     return "proper_noun"
 
 
-def _is_pending_auto_seed(entry: GlossaryEntry) -> bool:
-    return not entry.locked and entry.target == entry.source and "auto-seeded" in entry.notes
+def is_pending_auto_seed(entry: GlossaryEntry | object) -> bool:
+    target = getattr(entry, "target", "")
+    source = getattr(entry, "source", "")
+    notes = getattr(entry, "notes", "")
+    return (
+        getattr(entry, "locked", False) is False
+        and "auto-seeded" in notes
+        and (not str(target).strip() or target == source)
+    )

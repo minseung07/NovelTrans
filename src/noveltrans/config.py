@@ -140,26 +140,25 @@ class CredentialStore:
 
     def get_api_key(self) -> str:
         env_key = os.environ.get("OPENAI_API_KEY", "").strip()
-        if env_key:
+        if _is_usable_secret(env_key):
             return env_key
         key = self._get_keyring()
-        if key:
+        if _is_usable_secret(key):
             return key
-        return self._read_local_secret()
+        return _usable_or_empty(self._read_local_secret())
 
     def get_access_token(self) -> str:
         env_token = os.environ.get("NOVELTRANS_OPENAI_ACCESS_TOKEN", "").strip()
-        if env_token:
+        if _is_usable_secret(env_token):
             return env_token
         token = self._get_keyring_secret(self.access_token_username)
-        if token:
+        if _is_usable_secret(token):
             return token
-        return self._read_local_secret(self.access_token_path)
+        return _usable_or_empty(self._read_local_secret(self.access_token_path))
 
     def set_api_key(self, api_key: str) -> str:
         api_key = api_key.strip()
-        if not api_key:
-            raise ConfigurationError("API key cannot be empty")
+        _assert_usable_secret(api_key, "API key")
         if self._set_keyring(api_key):
             return "keyring"
         self._write_local_secret(api_key, self.secret_path)
@@ -167,8 +166,7 @@ class CredentialStore:
 
     def set_access_token(self, access_token: str) -> str:
         access_token = access_token.strip()
-        if not access_token:
-            raise ConfigurationError("Access token cannot be empty")
+        _assert_usable_secret(access_token, "Access token")
         if self._set_keyring_secret(self.access_token_username, access_token):
             return "keyring"
         self._write_local_secret(access_token, self.access_token_path)
@@ -279,3 +277,21 @@ class CredentialStore:
             raise
         except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ConfigurationError("Malformed credentials file") from exc
+
+
+def _assert_usable_secret(secret: str, label: str) -> None:
+    if not secret:
+        raise ConfigurationError(f"{label} cannot be empty")
+    if not _is_usable_secret(secret):
+        raise ConfigurationError(f"{label} looks malformed")
+
+
+def _usable_or_empty(secret: str) -> str:
+    return secret if _is_usable_secret(secret) else ""
+
+
+def _is_usable_secret(secret: str) -> bool:
+    secret = secret.strip()
+    if len(secret) < 3:
+        return False
+    return any(char.isalnum() for char in secret)

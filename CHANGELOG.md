@@ -2,6 +2,18 @@
 
 All notable changes to NovelTrans CLI will be documented in this file.
 
+## [1.0.4] - 2026-05-27
+
+### Changed
+
+- Interactive CLI option screens now use guided selections for episode ranges, model choice, output formats, custom translation style, honorific policy, glossary strictness, temperature, long-episode splitting, and glossary term types.
+- Free-form prompts now show examples or context when a typed value is still required.
+- Translation run screens now show live pending, running, completed, and failed episode ranges while jobs are active.
+- Obviously malformed OpenAI credentials are ignored/rejected before translation so bad local tokens fail early instead of producing repeated API 401 jobs.
+- Auto-seeded glossary candidates now keep the Korean target pending instead of writing Japanese-to-Japanese mappings into exports.
+- New project creation now uses settings defaults by default, moves advanced translation/output choices behind one optional screen, and supports back navigation in wizard prompts.
+- Removed the unused Textual UI path so the maintained interactive interface is the terminal wizard.
+
 ## [1.0.3] - 2026-05-27
 
 ### Added
@@ -26,7 +38,7 @@ All notable changes to NovelTrans CLI will be documented in this file.
 ### Added
 
 - Initial NovelTrans CLI release for authorized Japanese web novel translation workflows.
-- Keyboard-driven terminal wizard launched with `noveltrans`, plus legacy `--classic` and Textual `--textual` interfaces.
+- Keyboard-driven terminal wizard launched with `noveltrans`, plus legacy `--classic` interface.
 - Local TXT, HTML, ZIP, clipboard, manual paste, and editor-based source input flows.
 - Site policy gate with built-in connector policies for Aozora Bunko, Syosetu metadata, Kakuyomu, Hameln, pixiv novels, and local files.
 - Restricted-site URL workflows that preserve source metadata while requiring user-provided body text.
@@ -38,7 +50,7 @@ All notable changes to NovelTrans CLI will be documented in this file.
 - TXT, DOCX, and EPUB exporters implemented with the Python standard library.
 - Verification, status, estimate, report, policy import/refresh/show, and credential management CLI commands.
 - Connector plugin entry point support under `noveltrans.connectors`.
-- CI workflow and test suite covering connectors, policies, preprocessing, workflow resume, exporters, TUI mounting, credentials, and translator parsing.
+- CI workflow and test suite covering connectors, policies, preprocessing, workflow resume, exporters, credentials, and translator parsing.
 
 ### Security
 

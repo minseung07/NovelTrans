@@ -12,6 +12,9 @@ import sys
 import tempfile
 import webbrowser
 from pathlib import Path
+from threading import Thread
+from time import monotonic
+from typing import Callable
 
 from . import __version__
 from .config import AppConfig, ConfigManager, CredentialStore
@@ -28,6 +31,7 @@ from .models import (
 )
 from .policy import SAFE_POLICY_TEXT, PolicyEngine
 from .policy_registry import PolicyRegistry
+from .progress import format_progress_line, snapshot_project_progress, target_episode_numbers
 from .project import Project, ProjectManager
 from .translator import CodexCLI, normalize_translation_backend
 from .verify import verify_project
@@ -67,14 +71,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="NovelTrans CLI")
     parser.add_argument("--version", action="store_true", help="print version and exit")
     parser.add_argument("--classic", action="store_true", help="use the legacy numbered prompt UI")
-    parser.add_argument("--textual", action="store_true", help="use the Textual full-screen TUI")
     args = parser.parse_args(argv)
     if args.version:
         print(__version__)
         return 0
     try:
-        if args.textual:
-            return _run_textual_ui()
         if args.classic:
             return interactive_main()
         return _run_wizard_ui()
@@ -87,19 +88,6 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         print(f"파일 오류: {exc}", file=sys.stderr)
         return 1
-
-
-def _run_textual_ui() -> int:
-    try:
-        from .tui import run_textual_app
-    except ModuleNotFoundError as exc:
-        if exc.name == "textual":
-            raise ConfigurationError(
-                "Textual이 설치되어 있지 않습니다. `python3 -m pip install -e .`로 의존성을 설치하거나 "
-                "`noveltrans --classic`을 사용하세요."
-            ) from exc
-        raise
-    return run_textual_app()
 
 
 def _run_wizard_ui() -> int:
@@ -158,7 +146,7 @@ def _new_project_flow(manager: ProjectManager, config: AppConfig) -> None:
     print("5. 터미널에서 직접 입력")
     print("6. 외부 편집기로 작성")
     input_choice = _ask("선택", "1")
-    episode_spec = _ask("번역할 화수 범위 (예: all, 1-10, 5,8,12-20, 최신 5)", "all")
+    episode_spec = _choose_episode_spec("번역할 화수 범위")
     translation, parallel, quality, export = _collect_options(config)
 
     if input_choice == "1":
@@ -172,6 +160,7 @@ def _new_project_flow(manager: ProjectManager, config: AppConfig) -> None:
         user_permission = _confirm("이 URL의 자동 수집 조건을 충족하며 처리 권한이 있다", default=False)
         permission_evidence = ""
         if user_permission or policy.requires_user_permission:
+            print("권한/라이선스 근거 메모 예: author permission, public domain, authorized personal use")
             permission_evidence = _ask("권한/라이선스 근거 메모", "user confirmed authorized personal use")
         if not policy.auto_fetch_allowed:
             print("자동 본문 수집이 금지된 사이트입니다. 사용자가 제공한 원문만 처리할 수 있습니다.")
@@ -243,7 +232,12 @@ def _new_project_flow(manager: ProjectManager, config: AppConfig) -> None:
 
     _print_estimate(estimate_project_translation(project, resume=False))
     dry_run = _choose_translation_backend(translation.backend)
-    outputs = run_translation_and_export(project, dry_run=dry_run)
+    outputs = _run_translation_with_progress_cli(
+        project,
+        backend="dry-run" if dry_run else translation.backend,
+        resume=False,
+        runner=lambda: run_translation_and_export(project, dry_run=dry_run),
+    )
     print("\n완료")
     print(f"프로젝트: {project.root}")
     for output in outputs:
@@ -257,7 +251,7 @@ def _resume_project_flow(manager: ProjectManager) -> None:
     _print_project_status(project)
     if _confirm("새로 저장한 원문 파일에서 추가 화를 가져올까요", default=False):
         source_path = Path(_ask("TXT/HTML/ZIP 파일 경로")).expanduser()
-        episode_spec = _ask("가져올 화수 범위", "all")
+        episode_spec = _choose_episode_spec("가져올 화수 범위")
         replace_existing = _confirm("기존 화 번호도 새 원문으로 교체할까요", default=False)
         imported = add_source_episodes_from_local_file(
             project=project,
@@ -273,7 +267,12 @@ def _resume_project_flow(manager: ProjectManager) -> None:
         _print_project_status(project)
     _print_estimate(estimate_project_translation(project, resume=True))
     dry_run = _choose_translation_backend(manifest.translation.backend)
-    outputs = run_translation_and_export(project, dry_run=dry_run, resume=True)
+    outputs = _run_translation_with_progress_cli(
+        project,
+        backend="dry-run" if dry_run else manifest.translation.backend,
+        resume=True,
+        runner=lambda: run_translation_and_export(project, dry_run=dry_run, resume=True),
+    )
     print("이어 번역 및 출력 생성 완료")
     for output in outputs:
         print(f"- {output}")
@@ -289,7 +288,8 @@ def _glossary_flow(manager: ProjectManager) -> None:
             print("(비어 있음)")
         for entry in entries:
             locked = "잠금" if entry.locked else "편집"
-            print(f"- {entry.source} -> {entry.target} [{entry.type}, {locked}, {entry.confidence:.2f}]")
+            target = entry.target or "(번역 대기)"
+            print(f"- {entry.source} -> {target} [{entry.type}, {locked}, {entry.confidence:.2f}]")
         print("1. 용어 추가/수정")
         print("2. 용어 잠금")
         print("3. 충돌 보기/해결")
@@ -298,7 +298,7 @@ def _glossary_flow(manager: ProjectManager) -> None:
         if choice == "1":
             source = _ask("원문 용어")
             target = _ask("한국어 번역")
-            term_type = _ask("유형", "proper_noun")
+            term_type = _choose_term_type()
             glossary.add_or_update(
                 GlossaryEntry(
                     source=source,
@@ -324,8 +324,7 @@ def _glossary_flow(manager: ProjectManager) -> None:
 
 def _regenerate_exports_flow(manager: ProjectManager) -> None:
     project = _select_project(manager)
-    formats = _ask("출력 형식 (쉼표 구분: txt,docx,epub)", "txt,docx,epub")
-    outputs = Exporter().export(project, formats=[item.strip() for item in formats.split(",") if item.strip()])
+    outputs = Exporter().export(project, formats=_choose_formats())
     print("출력 파일 생성 완료")
     for output in outputs:
         print(f"- {output}")
@@ -378,6 +377,37 @@ def _print_estimate(estimate: object) -> None:
         print(f"- 예상 비용: ${estimated_cost:.4f}")
     else:
         print("- 예상 비용: 단가 미설정")
+
+
+def _run_translation_with_progress_cli(
+    project: Project,
+    backend: str,
+    resume: bool,
+    runner: Callable[[], list[Path]],
+) -> list[Path]:
+    target_numbers = target_episode_numbers(project, resume=resume)
+    started_at = monotonic()
+    state: dict[str, object] = {}
+
+    def worker() -> None:
+        try:
+            state["outputs"] = runner()
+        except Exception as exc:  # noqa: BLE001 - re-raised after progress loop.
+            state["error"] = exc
+
+    print("\n번역 진행")
+    print("대기/진행/완료 상태를 1초마다 갱신합니다.")
+    thread = Thread(target=worker, daemon=True)
+    thread.start()
+    while thread.is_alive():
+        snapshot = snapshot_project_progress(project, target_numbers, started_at)
+        print(format_progress_line(snapshot, backend=backend), flush=True)
+        thread.join(timeout=1.0)
+    snapshot = snapshot_project_progress(project, target_numbers, started_at)
+    print(format_progress_line(snapshot, backend=backend), flush=True)
+    if "error" in state:
+        raise state["error"]  # type: ignore[misc]
+    return list(state.get("outputs", []))
 
 
 def _print_project_status(project: Project) -> None:
@@ -464,9 +494,9 @@ def _settings_flow(config_manager: ConfigManager, config: AppConfig) -> AppConfi
         if choice == "1":
             config.base_dir = _ask("프로젝트 기본 디렉터리", config.base_dir)
         elif choice == "2":
-            config.default_model = _ask("기본 모델", config.default_model)
+            config.default_model = _choose_model(config.default_model, "기본 모델")
         elif choice == "3":
-            config.default_parallel_episodes = _ask_int("기본 동시 번역 화수", config.default_parallel_episodes, 1, 8)
+            config.default_parallel_episodes = _choose_concurrency(config.default_parallel_episodes)
         elif choice == "4":
             if _confirm("API key를 새로 저장할까요", default=True):
                 backend = store.set_api_key(getpass.getpass("OpenAI API key: "))
@@ -550,29 +580,29 @@ def _select_project(manager: ProjectManager) -> Project:
 
 
 def _collect_options(config: AppConfig) -> tuple[TranslationOptions, ParallelOptions, QualityOptions, ExportOptions]:
-    presets = {
-        "1": ("fast", "빠른 초벌 번역"),
-        "2": ("balanced", "균형 번역"),
-        "3": ("literary", "문학적 자연화"),
-        "4": ("literal", "직역 보존"),
-        "5": ("glossary", "용어 일관성 최우선"),
-        "6": ("custom", "커스텀"),
-    }
-    print("\n번역 모드")
-    for key, (_, label) in presets.items():
-        print(f"{key}. {label}")
-    preset_key = _ask("선택", "2")
-    preset = presets.get(preset_key, presets["2"])[0]
-    model = _ask("모델", config.default_model)
+    preset = _ask_choice(
+        "번역 모드",
+        [
+            ("빠른 초벌 번역", "fast", "속도 우선"),
+            ("균형 번역", "balanced", "일반 추천값"),
+            ("문학적 자연화", "literary", "한국 웹소설 문체 자연화"),
+            ("직역 보존", "literal", "원문 구조 최대 보존"),
+            ("용어 일관성 최우선", "glossary", "고유명사/설정 일관성 강화"),
+            ("커스텀", "custom", "세부 옵션 직접 지정"),
+        ],
+        "balanced",
+        help_text="처음이면 균형 번역을 고르세요.",
+    )
+    model = _choose_model(config.default_model)
     backend = _choose_backend(config.default_translation_backend)
-    concurrency = _ask_int("동시 번역 화수 (1/2/4/8)", config.default_parallel_episodes, 1, 8)
-    formats = _ask("출력 형식 (쉼표 구분)", "txt,docx,epub")
+    concurrency = _choose_concurrency(config.default_parallel_episodes)
+    formats = _choose_formats()
     translation = _translation_options_for_preset(preset, model, config.default_reasoning_effort)
     translation.backend = backend
     parallel = ParallelOptions(max_parallel_episodes=concurrency)
     quality = QualityOptions()
     export = ExportOptions(
-        formats=[item.strip() for item in formats.split(",") if item.strip()],
+        formats=formats,
         watermark=config.watermark,
     )
     if preset == "custom":
@@ -582,18 +612,17 @@ def _collect_options(config: AppConfig) -> tuple[TranslationOptions, ParallelOpt
 
 def _choose_backend(default: str = "openai") -> str:
     default = normalize_translation_backend(default)
-    labels = {
-        "1": ("openai", "OpenAI API key/access token"),
-        "2": ("codex", "Codex CLI 로그인"),
-        "3": ("auto", "자동 선택"),
-        "4": ("dry-run", "Dry-run"),
-    }
-    print("\n번역 백엔드")
-    for key, (value, label) in labels.items():
-        marker = " (현재)" if value == default else ""
-        print(f"{key}. {label}{marker}")
-    choice = _ask("선택", next(key for key, (value, _) in labels.items() if value == default))
-    return labels.get(choice, ("openai", ""))[0]
+    return _ask_choice(
+        "번역 백엔드",
+        [
+            ("자동 선택", "auto", "OpenAI 자격 증명 우선, 없으면 Codex CLI"),
+            ("OpenAI API key/access token", "openai", "저장된 API key 또는 access token 사용"),
+            ("Codex CLI 로그인", "codex", "`codex login` 세션 사용"),
+            ("Dry-run", "dry-run", "실제 번역 없이 파일 생성 흐름 검증"),
+        ],
+        default,
+        help_text="잘 모르겠으면 자동 선택을 쓰세요.",
+    )
 
 
 def _translation_options_for_preset(preset: str, model: str, reasoning_effort: str) -> TranslationOptions:
@@ -621,20 +650,17 @@ def _customize_options(
     quality: QualityOptions,
     export: ExportOptions,
 ) -> None:
-    translation.style = _ask("문체 프로필", translation.style)
-    translation.honorific_policy = _ask("존댓말/호칭 정책", translation.honorific_policy)
+    translation.reasoning_effort = _choose_reasoning_effort(translation.reasoning_effort)
+    translation.style = _choose_style(translation.style)
+    translation.honorific_policy = _choose_honorific_policy(translation.honorific_policy)
     translation.preserve_japanese_suffixes = _confirm("일본어 호칭 접미사 보존", translation.preserve_japanese_suffixes)
     translation.translate_author_notes = _confirm("작가 후기 번역", translation.translate_author_notes)
     translation.keep_ruby_as_parentheses = _confirm("루비를 괄호로 보존", translation.keep_ruby_as_parentheses)
-    translation.glossary_strictness = _ask("용어집 엄격도", translation.glossary_strictness)
-    translation.temperature = _ask_float("temperature", translation.temperature or 0.3, minimum=0.0)
+    translation.glossary_strictness = _choose_glossary_strictness(translation.glossary_strictness)
+    translation.temperature = _choose_temperature(translation.temperature)
     parallel.split_long_episode = _confirm("긴 화를 내부 분할", parallel.split_long_episode)
-    parallel.long_episode_threshold_chars = _ask_int(
-        "긴 화 기준 글자 수",
-        parallel.long_episode_threshold_chars,
-        1000,
-        200000,
-    )
+    if parallel.split_long_episode:
+        parallel.long_episode_threshold_chars = _choose_long_episode_threshold(parallel.long_episode_threshold_chars)
     quality.run_qa_pass = _confirm("QA 패스 실행", quality.run_qa_pass)
     quality.run_term_consistency_pass = _confirm("용어 일관성 검사", quality.run_term_consistency_pass)
     quality.check_missing_paragraphs = _confirm("누락 문단 검사", quality.check_missing_paragraphs)
@@ -1285,6 +1311,274 @@ def _open_auth_page(open_browser: bool = True) -> None:
 def _validate_parallel_arg(value: int) -> None:
     if not 1 <= value <= 8:
         raise ConfigurationError("동시 번역 화수는 1부터 8 사이여야 합니다.")
+
+
+def _ask_choice(
+    title: str,
+    choices: list[tuple[str, str, str]],
+    default: str,
+    help_text: str = "",
+) -> str:
+    print(f"\n{title}")
+    if help_text:
+        print(help_text)
+    default_index = 1
+    for index, (label, value, hint) in enumerate(choices, start=1):
+        if value == default:
+            default_index = index
+        suffix = " (기본)" if value == default else ""
+        detail = f" - {hint}" if hint else ""
+        print(f"{index}. {label}{suffix}{detail}")
+    while True:
+        raw = _ask("선택", str(default_index))
+        try:
+            index = int(raw)
+        except ValueError:
+            print("숫자를 입력하세요.")
+            continue
+        if 1 <= index <= len(choices):
+            return choices[index - 1][1]
+        print("목록에 있는 번호를 입력하세요.")
+
+
+def _ask_multi_choice(
+    title: str,
+    choices: list[tuple[str, str, str]],
+    defaults: list[str],
+) -> list[str]:
+    print(f"\n{title}")
+    default_numbers: list[str] = []
+    for index, (label, value, hint) in enumerate(choices, start=1):
+        if value in defaults:
+            default_numbers.append(str(index))
+        detail = f" - {hint}" if hint else ""
+        marker = "*" if value in defaults else " "
+        print(f"{index}. [{marker}] {label}{detail}")
+    while True:
+        raw = _ask("선택 번호를 쉼표로 입력", ",".join(default_numbers))
+        try:
+            numbers = [int(part.strip()) for part in raw.split(",") if part.strip()]
+        except ValueError:
+            print("숫자와 쉼표만 입력하세요.")
+            continue
+        if numbers and all(1 <= number <= len(choices) for number in numbers):
+            selected: list[str] = []
+            for number in numbers:
+                value = choices[number - 1][1]
+                if value not in selected:
+                    selected.append(value)
+            return selected
+        print("하나 이상, 목록에 있는 번호를 입력하세요.")
+
+
+def _choose_episode_spec(title: str) -> str:
+    mode = _ask_choice(
+        title,
+        [
+            ("전체 화", "all", "프로젝트가 가진 모든 화"),
+            ("한 화만", "single", "예: 12"),
+            ("연속 범위", "range", "예: 1-10"),
+            ("몇 개만 골라서", "list", "예: 1,3,8,12"),
+            ("최신 N화", "latest", "예: 최신 5"),
+            ("직접 입력", "custom", "all, 1-10, 5,8,12-20 같은 형식"),
+        ],
+        "all",
+        help_text="화수 입력 형식을 외우지 않아도 됩니다. 아래에서 고르세요.",
+    )
+    if mode == "all":
+        return "all"
+    if mode == "single":
+        return str(_ask_int("화 번호", 1, 1, 99999))
+    if mode == "range":
+        start = _ask_int("시작 화", 1, 1, 99999)
+        end = _ask_int("끝 화", start, start, 99999)
+        return f"{start}-{end}"
+    if mode == "list":
+        print("쉼표로 구분합니다. 예: 1,3,5")
+        return _ask("가져올 화 번호 목록", "1,3,5")
+    if mode == "latest":
+        count = _ask_choice(
+            "최신 몇 화",
+            [
+                ("최신 1화", "1", ""),
+                ("최신 3화", "3", ""),
+                ("최신 5화", "5", ""),
+                ("최신 10화", "10", ""),
+                ("직접 입력", "custom", ""),
+            ],
+            "5",
+        )
+        if count == "custom":
+            count = str(_ask_int("최신 화 수", 5, 1, 999))
+        return f"최신 {count}"
+    print("사용 가능한 예시: all / 1-10 / 5,8,12-20 / 최신 5")
+    return _ask("화수 범위 직접 입력", "all")
+
+
+def _choose_model(default: str, title: str = "모델") -> str:
+    configured = default.strip() or "gpt-5.5"
+    choices = [(f"현재 기본값 사용 ({configured})", configured, "모델명을 모르겠으면 이 값을 사용")]
+    if configured != "gpt-5.5":
+        choices.append(("gpt-5.5", "gpt-5.5", "프로젝트 기본 추천값"))
+    choices.append(("직접 입력", "__custom__", "새 모델이나 호환 엔드포인트를 알고 있을 때"))
+    selected = _ask_choice(title, choices, configured, help_text="모델명을 모르겠으면 현재 기본값을 사용하세요.")
+    if selected == "__custom__":
+        return _ask("모델명 직접 입력", configured)
+    return selected
+
+
+def _choose_concurrency(default: int) -> int:
+    default_value = str(default) if default in {1, 2, 4, 8} else "4"
+    selected = _ask_choice(
+        "동시 번역 화수",
+        [
+            ("1화", "1", "가장 안정적"),
+            ("2화", "2", "저속/저부하"),
+            ("4화", "4", "기본 추천"),
+            ("8화", "8", "빠르지만 실패/비용 관리 필요"),
+            ("직접 입력", "custom", "1-8 사이"),
+        ],
+        default_value,
+    )
+    if selected == "custom":
+        return _ask_int("동시 번역 화수", default, 1, 8)
+    return int(selected)
+
+
+def _choose_formats() -> list[str]:
+    return _ask_multi_choice(
+        "출력 형식",
+        [
+            ("TXT", "txt", "가장 단순한 텍스트 출력"),
+            ("DOCX", "docx", "워드/문서 편집용"),
+            ("EPUB", "epub", "전자책 리더용"),
+        ],
+        ["txt", "docx", "epub"],
+    )
+
+
+def _choose_reasoning_effort(default: str) -> str:
+    return _ask_choice(
+        "추론 강도",
+        [
+            ("낮음", "low", "빠른 초벌 번역"),
+            ("보통", "medium", "균형 추천"),
+            ("높음", "high", "비용/시간보다 품질 우선"),
+        ],
+        default if default in {"low", "medium", "high"} else "medium",
+    )
+
+
+def _choose_style(default: str) -> str:
+    return _select_or_custom(
+        "문체 프로필",
+        [
+            ("한국 웹소설 균형체", "korean_webnovel_balanced", "기본 추천"),
+            ("문학적 자연화", "korean_webnovel_literary_naturalized", "문장을 더 자연스럽게 다듬음"),
+            ("직역 구조 보존", "literal_structure_preserving", "원문 순서와 표현을 더 보존"),
+            ("용어 일관성 우선", "korean_webnovel_term_consistency_first", "고유명사와 설정 표기 고정"),
+        ],
+        default,
+        "잘 모르겠으면 한국 웹소설 균형체를 고르세요.",
+    )
+
+
+def _choose_honorific_policy(default: str) -> str:
+    return _select_or_custom(
+        "존댓말/호칭 정책",
+        [
+            ("상황 맞춤", "adaptive", "기본 추천"),
+            ("원문 격식 보존", "preserve_formality", "존댓말/반말 차이를 더 엄격히 유지"),
+            ("한국어 자연화", "korean_natural", "일본식 호칭을 줄이고 자연스럽게 처리"),
+            ("원문 호칭 우선", "source_suffix_sensitive", "님/씨/짱/군 같은 호칭 차이를 더 보존"),
+        ],
+        default,
+        "캐릭터 말투와 호칭을 처리하는 정책입니다.",
+    )
+
+
+def _choose_glossary_strictness(default: str) -> str:
+    return _ask_choice(
+        "용어집 엄격도",
+        [
+            ("낮음", "low", "문맥상 자연스러우면 변형 허용"),
+            ("보통", "medium", "핵심 고유명사 중심"),
+            ("높음", "high", "기본 추천"),
+            ("매우 엄격", "strict", "스킬명/지명/인명 흔들림 최소화"),
+        ],
+        default if default in {"low", "medium", "high", "strict"} else "high",
+    )
+
+
+def _choose_temperature(default: float | None) -> float | None:
+    current = 0.3 if default is None else default
+    selected = _ask_choice(
+        "문장 변형 정도",
+        [
+            ("낮음 0.1", "0.1", "용어/표현 일관성 우선"),
+            ("균형 0.3", "0.3", "기본 추천"),
+            ("자연화 0.45", "0.45", "문장 다듬기 여지 확대"),
+            ("높음 0.6", "0.6", "창의적 재구성 증가"),
+            ("직접 입력", "custom", f"현재값: {current}"),
+        ],
+        str(current) if current in {0.1, 0.3, 0.45, 0.6} else "0.3",
+        help_text="값이 높을수록 표현 변화가 커질 수 있습니다.",
+    )
+    if selected == "custom":
+        return _ask_float("temperature 직접 입력", current, minimum=0.0)
+    return float(selected)
+
+
+def _choose_long_episode_threshold(default: int) -> int:
+    selected = _ask_choice(
+        "긴 화 기준 글자 수",
+        [
+            ("10,000자", "10000", "자주 분할"),
+            ("20,000자", "20000", "기본 추천"),
+            ("40,000자", "40000", "긴 화만 분할"),
+            ("직접 입력", "custom", f"현재값: {default}"),
+        ],
+        str(default) if default in {10000, 20000, 40000} else "20000",
+    )
+    if selected == "custom":
+        return _ask_int("긴 화 기준 글자 수 직접 입력", default, 1000, 200000)
+    return int(selected)
+
+
+def _choose_term_type() -> str:
+    return _select_or_custom(
+        "용어 유형",
+        [
+            ("인명", "person", ""),
+            ("지명", "place", ""),
+            ("조직명", "organization", ""),
+            ("기술/스킬명", "skill", ""),
+            ("칭호", "title", ""),
+            ("고유 표현", "proper_noun", "확실하지 않을 때 추천"),
+            ("말투", "speech_style", ""),
+            ("설명/묘사", "description", ""),
+        ],
+        "proper_noun",
+        "용어집의 분류값입니다.",
+    )
+
+
+def _select_or_custom(
+    title: str,
+    choices: list[tuple[str, str, str]],
+    default: str,
+    help_text: str,
+) -> str:
+    values = {value for _, value, _ in choices}
+    selected = _ask_choice(
+        title,
+        [*choices, ("직접 입력", "__custom__", f"현재값: {default}")],
+        default if default in values else "__custom__",
+        help_text=help_text,
+    )
+    if selected == "__custom__":
+        return _ask(f"{title} 직접 입력", default)
+    return selected
 
 
 def _ask(prompt: str, default: str = "") -> str:

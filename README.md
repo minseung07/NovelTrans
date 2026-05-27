@@ -6,7 +6,9 @@
 
 - Codex/Claude/Hermes-style command-palette terminal wizard launched with `noveltrans`
 - Legacy prompt-based terminal UI preserved with `noveltrans --classic`
-- Textual full-screen UI available with the same dark command-palette visual language via `noveltrans --textual`
+- Guided option screens for episode ranges, models, backends, output formats, custom translation style, glossary strictness, and QA/export toggles
+- Simplified new-project flow that uses Settings defaults first, with advanced choices available only when requested
+- Live translation progress display with pending, running, completed, and failed episode ranges
 - Local TXT/HTML/ZIP input, clipboard/manual paste, and `$EDITOR` source editing workflows
 - Safety confirmations before project creation
 - Site policy gate for Aozora, Kakuyomu public pages, Syosetu metadata, Hameln, pixiv, and local files
@@ -15,6 +17,7 @@
 - Codex CLI translator backend using `codex login` credentials without reading API keys
 - Dry-run translator for offline pipeline checks
 - Glossary extraction, update, conflict tracking, and locking
+- Auto-seeded glossary candidates stay pending until the translator or user supplies a Korean target
 - QA report generation
 - TXT, DOCX, and EPUB export using only the Python standard library
 - SQLite project database and file-based project layout
@@ -30,7 +33,7 @@ make sync-frozen
 .venv/bin/noveltrans
 ```
 
-The default terminal wizard is controlled with arrow keys or `j`/`k`, Enter, and Space for multi-select prompts.
+The default terminal wizard is controlled with arrow keys or `j`/`k`, Enter, `b`/Backspace for back, and Space for multi-select prompts.
 
 If you are not using `uv`, install the package into a virtual environment:
 
@@ -45,12 +48,6 @@ Use the legacy prompt UI if you want the old line-by-line flow:
 
 ```bash
 noveltrans --classic
-```
-
-The full-screen Textual UI is available explicitly:
-
-```bash
-noveltrans --textual
 ```
 
 For a non-interactive local-file smoke run:
@@ -143,7 +140,7 @@ make doctor
 make smoke
 ```
 
-`make test-unittest` runs with only the standard-library test runner and skips Textual UI tests when Textual is not installed. `make test` is the CI-equivalent pytest path and requires the dev dependencies.
+`make test-unittest` runs with only the standard-library test runner. `make test` is the CI-equivalent pytest path and requires the dev dependencies.
 
 Before tagging a release, run the strict runtime check as part of the release checklist:
 
@@ -160,7 +157,7 @@ The default `noveltrans` command opens a terminal-native command palette. The fi
 - Glossary add/update, lock, and conflict resolution
 - Settings for default model, backend, Codex CLI command, token prices, watermark, and credentials
 
-The non-interactive commands remain available for scripts and tests. The full-screen Textual interface can be launched with `noveltrans --textual`.
+The non-interactive commands remain available for scripts and tests.
 
 Credentials can also be managed without opening the menu:
 
