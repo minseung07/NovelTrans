@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "noveltrans"
+version = "1.0.0"
+description = "Interactive terminal workflow for authorized Japanese web novel translation."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "NovelTrans Maintainers" }]
+dependencies = ["textual>=0.80,<1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "pytest-asyncio>=0.23,<1", "pytest-textual-snapshot>=1.0,<2"]
+
+[dependency-groups]
+dev = ["pytest>=8,<9", "pytest-asyncio>=0.23,<1", "pytest-textual-snapshot>=1.0,<2"]
+
+[project.scripts]
+noveltrans = "noveltrans.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
