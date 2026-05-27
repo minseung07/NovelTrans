@@ -54,11 +54,11 @@ class WorkflowExportTests(unittest.TestCase):
                 translation=TranslationOptions(model="gpt-5.5"),
                 parallel=ParallelOptions(max_parallel_episodes=2),
                 quality=QualityOptions(),
-                export=ExportOptions(formats=["txt", "docx", "epub"]),
+                export=ExportOptions(formats=["txt", "epub"]),
                 episode_spec="all",
             )
             outputs = run_translation_and_export(project, dry_run=True)
-            self.assertEqual({path.suffix for path in outputs}, {".txt", ".docx", ".epub"})
+            self.assertEqual({path.suffix for path in outputs}, {".txt", ".epub"})
             self.assertTrue((project.translated_dir / "episode_001.ko.md").exists())
             self.assertTrue((project.logs_dir / "episode_001.qa.json").exists())
             self.assertTrue((project.logs_dir / "estimate.json").exists())
@@ -72,30 +72,32 @@ class WorkflowExportTests(unittest.TestCase):
             self.assertIn("수집일:", txt)
             self.assertIn("[DRY-RUN KO]", txt)
 
-            with zipfile.ZipFile(project.exports_dir / f"{project.root.name}.docx") as docx:
-                self.assertIn("word/document.xml", docx.namelist())
-                document_xml = docx.read("word/document.xml").decode("utf-8")
-                self.assertIn("목차", document_xml)
-                self.assertIn("본문", document_xml)
-                self.assertIn("수집일:", document_xml)
             with zipfile.ZipFile(project.exports_dir / f"{project.root.name}.epub") as epub:
                 names = epub.namelist()
                 self.assertEqual(names[0], "mimetype")
                 self.assertIn("OEBPS/content.opf", names)
+                self.assertIn("OEBPS/title.xhtml", names)
                 self.assertIn("OEBPS/chapter_001.xhtml", names)
                 content_opf = epub.read("OEBPS/content.opf").decode("utf-8")
                 self.assertIn("<dc:source>", content_opf)
                 self.assertIn("<dc:rights>", content_opf)
+                self.assertIn("<dc:language>ko</dc:language>", content_opf)
+                self.assertIn("page-progression-direction=\"ltr\"", content_opf)
+                title_page = epub.read("OEBPS/title.xhtml").decode("utf-8")
+                self.assertIn("작품 정보", title_page)
+                self.assertIn("수집일", title_page)
                 chapter = epub.read("OEBPS/chapter_001.xhtml").decode("utf-8")
                 self.assertIn("<h1>第1話 始まり [DRY-RUN]</h1>", chapter)
                 self.assertNotIn("<p>第1話 始まり [DRY-RUN]</p>", chapter)
+                nav = epub.read("OEBPS/nav.xhtml").decode("utf-8")
+                self.assertIn("작품 정보", nav)
 
             with sqlite3.connect(project.root / "project.db") as conn:
                 rows = conn.execute("SELECT status, COUNT(*) FROM episodes GROUP BY status").fetchall()
             self.assertEqual(dict(rows).get("completed"), 2)
 
             second_outputs = run_translation_and_export(project, dry_run=True, resume=True)
-            self.assertEqual({path.suffix for path in second_outputs}, {".txt", ".docx", ".epub"})
+            self.assertEqual({path.suffix for path in second_outputs}, {".txt", ".epub"})
             self.assertEqual(estimate_project_translation(project, resume=True).episode_count, 0)
             self.assertEqual(estimate_project_translation(project, resume=True).estimated_total_tokens, 0)
 
@@ -556,7 +558,7 @@ class WorkflowExportTests(unittest.TestCase):
                 translation=TranslationOptions(model="gpt-5.5"),
                 parallel=ParallelOptions(max_parallel_episodes=1, retries=0),
                 quality=QualityOptions(),
-                export=ExportOptions(formats=["txt", "docx", "epub"], include_author_notes=False),
+                export=ExportOptions(formats=["txt", "epub"], include_author_notes=False),
             )
             run_translation_and_export(project, translator=AfterwordTranslator())
 
@@ -618,9 +620,9 @@ class WorkflowExportTests(unittest.TestCase):
             self.assertLess(text.index("## 본문"), text.index("## 후기"))
             with zipfile.ZipFile(project.exports_dir / f"{project.root.name}.epub") as epub:
                 chapter = epub.read("OEBPS/chapter_001.xhtml").decode("utf-8")
-            self.assertIn("<h2>전서</h2>", chapter)
-            self.assertIn("<h2>본문</h2>", chapter)
-            self.assertIn("<h2>후기</h2>", chapter)
+            self.assertIn('<h2 class="section-title">전서</h2>', chapter)
+            self.assertIn('<h2 class="section-title">본문</h2>', chapter)
+            self.assertIn('<h2 class="section-title">후기</h2>', chapter)
 
     def test_split_long_episode_translates_chunks_and_merges_result(self) -> None:
         class ChunkTranslator(Translator):
@@ -1081,7 +1083,7 @@ class WorkflowExportTests(unittest.TestCase):
                         "--confirm-rights",
                         "--no-redistribute",
                         "--formats",
-                        "txt,docx,epub",
+                        "txt,epub",
                     ]
                 )
             self.assertEqual(code, 0)

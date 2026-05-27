@@ -5,8 +5,10 @@
 ## What Works In v1
 
 - Codex/Claude/Hermes-style command-palette terminal wizard launched with `noveltrans`
-- Guided option screens for episode ranges, models, backends, output formats, custom translation style, glossary strictness, and QA/export toggles
-- Minimal new-project flow that uses Settings defaults first; source mode, episode range, URL handling, translation style, QA, and output choices live in Settings
+- Task-first home screen with new translation, resume, export regeneration, and tools/settings grouped separately
+- Minimal new-project flow: add source text first, review a short ready-to-translate summary, then start or open advanced settings
+- Category-based settings for authentication, translation defaults, output defaults, safety/policy, and advanced tuning
+- Shared wizard controls for source input, speed, translation mode, output, and review settings so defaults and per-project overrides behave the same way
 - Live translation progress display with pending, running, completed, and failed episode ranges
 - Local TXT/HTML/ZIP input, clipboard/manual paste, and `$EDITOR` source editing workflows
 - Safety confirmations before project creation
@@ -18,7 +20,7 @@
 - Glossary extraction, update, conflict tracking, and locking
 - Auto-seeded glossary candidates stay pending until the translator or user supplies a Korean target
 - QA report generation
-- TXT, DOCX, and EPUB export using only the Python standard library
+- TXT and higher-quality EPUB export using only the Python standard library
 - SQLite project database and file-based project layout
 - Entry point for connector plugins via `noveltrans.connectors`
 - Local site-policy update imports from JSON file or HTTPS URL
@@ -34,7 +36,7 @@ make sync-frozen
 
 The default terminal wizard is controlled with arrow keys or `j`/`k`, Enter, `b`/Backspace for back, and Space for multi-select prompts.
 
-New translation projects intentionally ask for very little by default: project name, the configured source input, and one rights/no-redistribution confirmation. Use Settings first if you want to change default source mode, URL collection behavior, episode range, backend/model, QA, or output formats.
+New translation projects start by asking for source text, then show a compact summary of source, range, output, translation mode, speed, and review checks. Project naming, output formats, model/backend choices, review details, and policy defaults stay behind `바꾸기`, `고급 설정`, or `도구와 설정`. The same selection screens are used in Settings and in the project start flow, so choices such as speed and translation mode are applied consistently.
 
 See available non-interactive commands with:
 
@@ -55,7 +57,7 @@ noveltrans
 For a non-interactive local-file smoke run:
 
 ```bash
-noveltrans run-local --name demo --input sample.txt --dry-run --confirm-rights --no-redistribute --formats txt,docx,epub
+noveltrans run-local --name demo --input sample.txt --dry-run --confirm-rights --no-redistribute --formats txt,epub
 ```
 
 For a real translation through a ChatGPT-authenticated Codex CLI instead of a Platform API key:
@@ -63,7 +65,7 @@ For a real translation through a ChatGPT-authenticated Codex CLI instead of a Pl
 ```bash
 codex login
 noveltrans auth codex-status
-noveltrans run-local --name demo --input sample.txt --backend codex --confirm-rights --no-redistribute --formats txt,docx,epub
+noveltrans run-local --name demo --input sample.txt --backend codex --confirm-rights --no-redistribute --formats txt,epub
 ```
 
 For a Kakuyomu public work or episode URL:
@@ -91,7 +93,7 @@ noveltrans estimate --project demo
 To regenerate output files from an existing translated project:
 
 ```bash
-noveltrans export --project demo --formats txt,docx,epub
+noveltrans export --project demo --formats txt,epub
 noveltrans report --project demo
 noveltrans verify --project demo
 ```
@@ -154,10 +156,14 @@ noveltrans doctor --strict
 
 The default `noveltrans` command opens a terminal-native command palette. The first screen provides:
 
-- New project creation for URL or TXT/HTML/ZIP input
-- Existing project resume, source import, translation, verification, and export
-- Glossary add/update, lock, and conflict resolution
-- Settings for default model, backend, Codex CLI command, token prices, watermark, and credentials
+- `새 원문 번역` for adding source text first, then starting from a compact ready-to-translate summary
+- `이어서 번역` for project resume, source import, verification, reports, export, and project glossary work
+- `결과 파일 다시 만들기` for regenerating TXT/EPUB output from an existing translated project
+- `도구와 설정` for authentication, translation defaults, output defaults, safety/policy defaults, advanced tuning, and glossary tools
+
+The new translation flow keeps common edits in `바꾸기`: source, project name, translation range, output formats, translation mode, and speed. Advanced settings are grouped by intent: model/backend, style and honorific behavior, review checks, and output details.
+
+Settings uses the same choice helpers as project creation. For example, speed is always selected as `차분하게 1화씩`, `보통 2화씩`, `빠르게 4화씩`, or `최대 8화씩`, and translation mode updates the actual style, temperature, glossary strictness, and reasoning defaults used by new projects.
 
 The non-interactive commands remain available for scripts and tests.
 

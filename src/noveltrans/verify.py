@@ -66,12 +66,17 @@ def verify_project(project: Project, formats: list[str] | None = None) -> Verifi
             continue
         if not path.stat().st_size:
             issues.append(f"export/empty:{fmt}")
-        if fmt == "docx":
-            _verify_zip_members(path, ["word/document.xml"], issues, "docx")
-        elif fmt == "epub":
+        if fmt == "epub":
             _verify_zip_members(
                 path,
-                ["mimetype", "META-INF/container.xml", "OEBPS/content.opf", "OEBPS/nav.xhtml"],
+                [
+                    "mimetype",
+                    "META-INF/container.xml",
+                    "OEBPS/content.opf",
+                    "OEBPS/nav.xhtml",
+                    "OEBPS/title.xhtml",
+                    "OEBPS/style.css",
+                ],
                 issues,
                 "epub",
             )

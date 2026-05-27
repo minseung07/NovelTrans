@@ -83,6 +83,13 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):
                 manager.load()
 
+    def test_config_manager_drops_removed_docx_default_format(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = ConfigManager(Path(tmp))
+            manager.config_path.write_text('{"default_output_formats": ["txt", "docx", "epub"]}', encoding="utf-8")
+            loaded = manager.load()
+            self.assertEqual(loaded.default_output_formats, ["txt", "epub"])
+
     def test_credential_store_local_encrypted_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = CredentialStore(Path(tmp))

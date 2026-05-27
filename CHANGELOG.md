@@ -2,6 +2,16 @@
 
 All notable changes to NovelTrans CLI will be documented in this file.
 
+## [1.0.6] - 2026-05-27
+
+### Changed
+
+- Reworked the terminal wizard home screen around user tasks: new translation, resume, export regeneration, and tools/settings.
+- New translation projects now start with source input, then show a compact ready-to-translate summary with source, range, output, translation mode, speed, and review state.
+- Settings are now grouped into authentication, translation defaults, output defaults, safety/policy, and advanced tuning instead of exposing every option at once.
+- Settings and per-project start flows now share selection controls for source input, speed, translation mode, output formats, and review options.
+- Translation mode changes now update the actual style, temperature, glossary strictness, and reasoning defaults used by new projects.
+
 ## [1.0.5] - 2026-05-27
 
 ### Added

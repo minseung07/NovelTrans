@@ -27,7 +27,7 @@ class PolicyEngine:
     def describe(self, policy: ConnectorPolicy) -> str:
         policy = self.effective_policy(policy)
         status = "자동 수집 허용" if policy.auto_fetch_allowed else "자동 본문 수집 금지"
-        modes = ", ".join(policy.allowed_input_modes) or "none"
+        modes = ", ".join(_input_mode_label(mode) for mode in policy.allowed_input_modes) or "없음"
         lines = [
             f"{policy.site_name} / 등급 {policy.grade} / {status}",
             f"- 공식 API 필요: {'예' if policy.requires_official_api else '아니오'}",
@@ -85,3 +85,17 @@ class PolicyEngine:
 
     def as_dict(self, policy: ConnectorPolicy) -> dict[str, object]:
         return asdict(self.effective_policy(policy))
+
+
+def _input_mode_label(mode: str) -> str:
+    labels = {
+        "url": "URL",
+        "metadata_url": "메타데이터용 URL",
+        "txt": "TXT",
+        "html": "HTML",
+        "zip": "ZIP",
+        "clipboard": "붙여넣기",
+        "manual": "직접 입력",
+        "editor": "편집기 입력",
+    }
+    return labels.get(mode, mode)

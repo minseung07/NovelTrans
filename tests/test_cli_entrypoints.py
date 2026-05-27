@@ -76,12 +76,24 @@ class CLIEntrypointTests(unittest.TestCase):
         self.assertEqual(draft.translation.model, "custom-model")
         self.assertEqual(draft.translation.backend, "codex")
         self.assertEqual(draft.translation.preset, "literal")
+        self.assertEqual(draft.translation.style, "literal_structure_preserving")
+        self.assertEqual(draft.translation.temperature, 0.2)
         self.assertEqual(draft.source_mode, "file")
         self.assertEqual(draft.episode_spec, "1-3")
         self.assertEqual(draft.parallel.max_parallel_episodes, 2)
         self.assertEqual(draft.export.formats, ["txt"])
         self.assertFalse(draft.quality.run_qa_pass)
         self.assertEqual(draft.export.watermark, "wm")
+
+    def test_wizard_labels_keep_technical_terms_in_english(self) -> None:
+        from noveltrans.wizard import _backend_label, _format_label, _source_mode_label
+
+        self.assertEqual(_source_mode_label("url"), "URL 붙여넣기")
+        self.assertEqual(_format_label("txt"), "TXT")
+        self.assertEqual(_format_label("epub"), "EPUB")
+        self.assertEqual(_backend_label("openai"), "OpenAI로 번역")
+        self.assertEqual(_backend_label("codex"), "Codex로 번역")
+        self.assertEqual(_backend_label("dry-run"), "Dry-run")
 
     def test_wizard_blocked_url_goes_to_user_provided_source_flow(self) -> None:
         from noveltrans.config import AppConfig
@@ -137,7 +149,7 @@ class CLIEntrypointTests(unittest.TestCase):
             source.write_text("# 第1話\n本文。", encoding="utf-8")
             fake_project = object()
             with (
-                patch("builtins.input", side_effect=["quick", str(source), ""]),
+                patch("builtins.input", side_effect=["", str(source), "", ""]),
                 patch("noveltrans.wizard.create_project_from_local_file", return_value=fake_project) as create_project,
                 patch("noveltrans.wizard._run_project_translation") as run_translation,
             ):
@@ -145,6 +157,73 @@ class CLIEntrypointTests(unittest.TestCase):
 
         create_project.assert_called_once()
         run_translation.assert_called_once_with(prompt, fake_project, "openai", resume=False, confirm_start=False)
+
+    def test_home_menu_hides_tools_under_tools_and_settings(self) -> None:
+        from noveltrans.config import AppConfig
+        from noveltrans.project import ProjectManager
+        from noveltrans.wizard import TerminalPrompt, wizard_main
+
+        prompt = TerminalPrompt()
+        prompt.interactive = False
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_dir = root / "config"
+            output = StringIO()
+            with (
+                patch.dict("os.environ", {"NOVELTRANS_CONFIG_DIR": str(config_dir)}),
+                patch("noveltrans.wizard.TerminalPrompt", return_value=prompt),
+                patch("noveltrans.wizard.ProjectManager", return_value=ProjectManager(root / "projects")),
+                patch("builtins.input", side_effect=["4"]),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(wizard_main(), 0)
+            text = output.getvalue()
+            self.assertIn("도구와 설정", text)
+            self.assertNotIn("용어집 관리", text)
+
+    def test_settings_are_grouped_by_category(self) -> None:
+        from noveltrans.config import AppConfig, CredentialStore
+        from noveltrans.wizard import _settings_choices
+
+        with tempfile.TemporaryDirectory() as tmp:
+            choices = _settings_choices(AppConfig(), CredentialStore(Path(tmp)))
+
+        self.assertEqual(
+            [choice.label for choice in choices],
+            ["인증", "번역 기본값", "출력 기본값", "안전/정책", "고급 설정", "저장하고 돌아가기"],
+        )
+
+    def test_settings_preset_updates_actual_translation_defaults(self) -> None:
+        from noveltrans.config import AppConfig, CredentialStore
+        from noveltrans.wizard import TerminalPrompt, _edit_flat_setting, _new_project_draft_from_config
+
+        prompt = TerminalPrompt()
+        prompt.interactive = False
+        config = AppConfig()
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("builtins.input", side_effect=["3"]):
+                _edit_flat_setting(prompt, config, CredentialStore(Path(tmp)), "preset")
+
+        self.assertEqual(config.default_translation_preset, "literary")
+        self.assertEqual(config.default_style, "korean_webnovel_literary_naturalized")
+        self.assertEqual(config.default_temperature, 0.45)
+        draft = _new_project_draft_from_config(config)
+        self.assertEqual(draft.translation.preset, "literary")
+        self.assertEqual(draft.translation.style, "korean_webnovel_literary_naturalized")
+        self.assertEqual(draft.translation.temperature, 0.45)
+
+    def test_settings_speed_uses_same_choice_flow_as_new_project(self) -> None:
+        from noveltrans.config import AppConfig, CredentialStore
+        from noveltrans.wizard import TerminalPrompt, _edit_flat_setting
+
+        prompt = TerminalPrompt()
+        prompt.interactive = False
+        config = AppConfig(default_parallel_episodes=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("builtins.input", side_effect=["3"]):
+                _edit_flat_setting(prompt, config, CredentialStore(Path(tmp)), "parallel")
+
+        self.assertEqual(config.default_parallel_episodes, 4)
 
 
 if __name__ == "__main__":

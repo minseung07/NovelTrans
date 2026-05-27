@@ -30,4 +30,4 @@ doctor:
 	$(UV_RUN) run noveltrans doctor --backend auto --strict
 
 smoke:
-	$(UV_RUN) run noveltrans run-local --name smoke --input examples/smoke_input.txt --dry-run --confirm-rights --no-redistribute --formats txt,docx,epub
+	$(UV_RUN) run noveltrans run-local --name smoke --input examples/smoke_input.txt --dry-run --confirm-rights --no-redistribute --formats txt,epub

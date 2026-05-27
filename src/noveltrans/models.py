@@ -117,7 +117,7 @@ class QualityOptions:
 
 @dataclass(slots=True)
 class ExportOptions:
-    formats: list[str] = field(default_factory=lambda: ["txt", "docx", "epub"])
+    formats: list[str] = field(default_factory=lambda: ["txt", "epub"])
     include_glossary: bool = True
     include_author_notes: bool = True
     watermark: str = "개인 번역본 / 재배포 금지 / 원저작권은 원작자에게 있음"

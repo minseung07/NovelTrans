@@ -64,7 +64,8 @@ TRANSLATION_PRESETS = {"fast", "balanced", "literary", "literal", "glossary"}
 REASONING_EFFORTS = {"low", "medium", "high"}
 GLOSSARY_STRICTNESS = {"low", "medium", "high", "strict"}
 URL_COLLECTION_MODES = {"auto", "user-file", "ask"}
-EXPORT_FORMATS = {"txt", "docx", "epub"}
+EXPORT_FORMATS = {"txt", "epub"}
+REMOVED_EXPORT_FORMATS = {"docx"}
 
 
 @dataclass(slots=True)
@@ -90,12 +91,12 @@ class AppConfig:
     default_check_missing_paragraphs: bool = True
     default_compare_length_ratio: bool = True
     default_banned_terms: list[str] = field(default_factory=list)
-    default_output_formats: list[str] = field(default_factory=lambda: ["txt", "docx", "epub"])
+    default_output_formats: list[str] = field(default_factory=lambda: ["txt", "epub"])
     default_include_glossary: bool = True
     default_include_author_notes: bool = True
     default_epub_vertical_writing: bool = False
     default_url_collection_mode: str = "auto"
-    default_permission_note: str = "user confirmed authorized personal use in NovelTrans settings"
+    default_permission_note: str = "사용자가 권한 있는 개인 이용 목적임을 설정에서 확인함"
     show_policy_details_on_start: bool = False
     prompt_source_mode_on_start: bool = False
     show_new_project_review: bool = False
@@ -173,7 +174,11 @@ def _config_from_values(values: dict[str, Any]) -> AppConfig:
         raise ConfigurationError("Malformed config field default_glossary_strictness")
     if values["default_url_collection_mode"] not in URL_COLLECTION_MODES:
         raise ConfigurationError("Malformed config field default_url_collection_mode")
-    output_formats = [item.strip().lower() for item in values["default_output_formats"] if item.strip()]
+    output_formats = [
+        item.strip().lower()
+        for item in values["default_output_formats"]
+        if item.strip() and item.strip().lower() not in REMOVED_EXPORT_FORMATS
+    ]
     if not output_formats or set(output_formats) - EXPORT_FORMATS:
         raise ConfigurationError("Malformed config field default_output_formats")
     values["default_output_formats"] = output_formats
