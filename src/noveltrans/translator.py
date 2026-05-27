@@ -115,9 +115,10 @@ class CodexCLI:
         executable = self.executable()
         try:
             completed = subprocess.run(
-                [executable, "exec", prompt],
+                [executable, "exec", "-"],
                 check=False,
                 capture_output=True,
+                input=prompt,
                 text=True,
                 timeout=self.timeout,
             )

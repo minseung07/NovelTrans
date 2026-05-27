@@ -2,6 +2,14 @@
 
 All notable changes to NovelTrans CLI will be documented in this file.
 
+## [1.0.1] - 2026-05-27
+
+### Changed
+
+- Codex CLI translation now sends prompts through stdin via `codex exec -` instead of passing full episode prompts as command-line arguments.
+- New projects write `project.json` manifests while retaining read compatibility with legacy `project.yaml` manifests.
+- Release checklist documentation now includes `noveltrans doctor --strict`.
+
 ## [1.0.0] - 2026-05-27
 
 ### Added

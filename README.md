@@ -137,6 +137,12 @@ make smoke
 
 `make test-unittest` runs with only the standard-library test runner and skips Textual UI tests when Textual is not installed. `make test` is the CI-equivalent pytest path and requires the dev dependencies.
 
+Before tagging a release, run the strict runtime check as part of the release checklist:
+
+```bash
+noveltrans doctor --strict
+```
+
 ## Terminal Wizard
 
 The default `noveltrans` command opens a terminal-native command palette. The first screen provides:
@@ -170,7 +176,9 @@ codex login
 noveltrans run-local --name demo --input sample.txt --backend codex --confirm-rights --no-redistribute
 ```
 
-The Codex backend checks `codex login status` and delegates each translation job to `codex exec`. It does not parse, copy, or modify Codex's cached credentials. The existing API key path is left intact; choose `--backend openai`, `--backend codex`, `--backend auto`, or `--backend dry-run` per run.
+The Codex backend checks `codex login status` and delegates each translation job to `codex exec` through stdin, so long episode prompts are not passed through shell argument limits. It does not parse, copy, or modify Codex's cached credentials. The existing API key path is left intact; choose `--backend openai`, `--backend codex`, `--backend auto`, or `--backend dry-run` per run.
+
+New projects store their manifest as `project.json`. Existing `project.yaml` manifests from earlier local builds are still read for compatibility.
 
 ## Safety Policy
 

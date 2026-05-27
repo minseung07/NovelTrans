@@ -20,12 +20,32 @@ from .models import (
 )
 from .utils import atomic_write_json, ensure_dir, now_iso, read_json, slugify, unique_path
 
+CANONICAL_MANIFEST_NAME = "project.json"
+LEGACY_MANIFEST_NAME = "project.yaml"
+
 
 class Project:
     def __init__(self, root: Path) -> None:
         self.root = root
-        self.manifest_path = root / "project.yaml"
         self.db = ProjectDB(root / "project.db")
+
+    @property
+    def manifest_path(self) -> Path:
+        return self.root / CANONICAL_MANIFEST_NAME
+
+    @property
+    def legacy_manifest_path(self) -> Path:
+        return self.root / LEGACY_MANIFEST_NAME
+
+    def existing_manifest_path(self) -> Path | None:
+        if self.manifest_path.exists():
+            return self.manifest_path
+        if self.legacy_manifest_path.exists():
+            return self.legacy_manifest_path
+        return None
+
+    def has_manifest(self) -> bool:
+        return self.existing_manifest_path() is not None
 
     @property
     def source_dir(self) -> Path:
@@ -52,9 +72,10 @@ class Project:
             ensure_dir(path)
 
     def load_manifest(self) -> ProjectManifest:
-        data = read_json(self.manifest_path, default=None)
+        path = self.existing_manifest_path() or self.manifest_path
+        data = read_json(path, default=None)
         if not data:
-            raise FileNotFoundError(self.manifest_path)
+            raise FileNotFoundError(path)
         return manifest_from_dict(data)
 
     def save_manifest(self, manifest: ProjectManifest) -> None:
@@ -105,7 +126,11 @@ class ProjectManager:
     def list_projects(self) -> list[Project]:
         if not self.base_dir.exists():
             return []
-        projects = [Project(path) for path in sorted(self.base_dir.iterdir()) if (path / "project.yaml").exists()]
+        projects = [
+            Project(path)
+            for path in sorted(self.base_dir.iterdir())
+            if (path / CANONICAL_MANIFEST_NAME).exists() or (path / LEGACY_MANIFEST_NAME).exists()
+        ]
         return projects
 
     def create_project(
@@ -147,7 +172,7 @@ class ProjectManager:
         if not path.exists():
             path = self.base_dir / slug_or_path
         project = Project(path)
-        if not project.manifest_path.exists():
+        if not project.has_manifest():
             raise FileNotFoundError(project.manifest_path)
         return project
 

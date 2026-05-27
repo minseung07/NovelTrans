@@ -112,7 +112,9 @@ class WorkflowExportTests(unittest.TestCase):
                 "if sys.argv[1:3] == ['login', 'status']:\n"
                 "    print('ChatGPT login active')\n"
                 "    raise SystemExit(0)\n"
-                "if len(sys.argv) >= 2 and sys.argv[1] == 'exec':\n"
+                "if sys.argv[1:3] == ['exec', '-']:\n"
+                "    prompt = sys.stdin.read()\n"
+                "    assert 'Do not use shell commands' in prompt\n"
                 "    print(json.dumps({\n"
                 "        'title_ko': '제1화',\n"
                 "        'foreword_ko': '',\n"
@@ -155,6 +157,8 @@ class WorkflowExportTests(unittest.TestCase):
                 )
             self.assertEqual(code, 0)
             project_root = Path([line for line in output.getvalue().splitlines() if line.strip()][0])
+            self.assertTrue((project_root / "project.json").exists())
+            self.assertFalse((project_root / "project.yaml").exists())
             translated = (project_root / "translated" / "episode_001.ko.md").read_text(encoding="utf-8")
             self.assertIn("CODEX KO", translated)
 

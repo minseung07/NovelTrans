@@ -18,7 +18,9 @@ from noveltrans.cli import _capture_editor_text_to_temp_file, _has_openai_creden
 from noveltrans.estimate import estimate_translation
 from noveltrans.errors import ConfigurationError, TranslationError
 from noveltrans.glossary import GlossaryManager
-from noveltrans.models import EpisodeText, GlossaryEntry, Section
+from noveltrans.models import EpisodeText, ExportOptions, GlossaryEntry, ParallelOptions, QualityOptions, Section
+from noveltrans.models import TranslationOptions, WorkMetadata
+from noveltrans.project import Project, ProjectManager
 from noveltrans.prompts import build_episode_payload
 from noveltrans.qa import QAEngine
 from noveltrans.translator import CodexCLI, CodexTranslator, DryRunTranslator, OpenAITranslator
@@ -161,6 +163,36 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             code = main(["auth", "codex-login", "--command", "codex-test", "--device-auth"])
         self.assertEqual(code, 0)
         self.assertIn("codex_login=authenticated", output.getvalue())
+
+    def test_project_manifest_uses_json_and_reads_legacy_yaml_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manager = ProjectManager(root / "projects")
+            project = manager.create_project(
+                name="manifest",
+                work=WorkMetadata(
+                    title="Manifest Test",
+                    source_url="local.txt",
+                    license_note="user_provided",
+                ),
+                translation=TranslationOptions(),
+                parallel=ParallelOptions(),
+                quality=QualityOptions(),
+                export=ExportOptions(formats=["txt"]),
+                source_policy=None,
+            )
+            self.assertTrue((project.root / "project.json").exists())
+            self.assertFalse((project.root / "project.yaml").exists())
+
+            legacy_root = root / "projects" / "legacy"
+            legacy_root.mkdir(parents=True)
+            (legacy_root / "project.yaml").write_text(
+                (project.root / "project.json").read_text(encoding="utf-8").replace('"slug": "manifest"', '"slug": "legacy"'),
+                encoding="utf-8",
+            )
+            legacy = Project(legacy_root)
+            self.assertEqual(legacy.load_manifest().slug, "legacy")
+            self.assertEqual([item.root.name for item in manager.list_projects()], ["legacy", "manifest"])
 
     def test_doctor_reports_runtime_configuration(self) -> None:
         class EmptyStore:
