@@ -114,8 +114,10 @@ def create_project_from_url(
         )
         _assert_translatable_episodes(episodes, url)
     else:
+        actions = " / ".join(engine.available_actions(policy))
         raise PolicyViolation(
-            f"{policy.site_name}는 자동 본문 수집이 비활성화되어 있습니다. 사용자 제공 파일이 필요합니다."
+            f"{policy.site_name}는 자동 본문 수집이 비활성화되어 있습니다. "
+            f"사용자 제공 파일이 필요합니다. 가능 작업: {actions}"
         )
 
     project = manager.create_project(name, work, translation, parallel, quality, export, policy)

@@ -119,6 +119,12 @@ class PolicyRegistryAndUrlFallbackTests(unittest.TestCase):
             self.assertIn("auto_fetch=blocked", output.getvalue())
             self.assertIn("disabled from cli test", output.getvalue())
 
+            output = StringIO()
+            with redirect_stdout(output):
+                code = main(["policy", "show", "--config-dir", str(root), "--site", "青空", "--details"])
+            self.assertEqual(code, 0)
+            self.assertIn("가능 작업", output.getvalue())
+
     def test_policy_cli_refresh_uses_saved_https_url(self) -> None:
         class FakeResponse:
             def __enter__(self):

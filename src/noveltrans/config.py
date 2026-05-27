@@ -10,7 +10,7 @@ import json
 import os
 import platform
 import secrets
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,14 @@ CONFIG_STRING_FIELDS = {
     "base_dir",
     "default_model",
     "default_reasoning_effort",
+    "default_translation_preset",
+    "default_source_mode",
+    "default_episode_spec",
+    "default_style",
+    "default_honorific_policy",
+    "default_glossary_strictness",
+    "default_url_collection_mode",
+    "default_permission_note",
     "watermark",
     "credential_backend",
     "openai_organization",
@@ -31,9 +39,32 @@ CONFIG_STRING_FIELDS = {
     "default_translation_backend",
     "codex_command",
 }
-CONFIG_FLOAT_FIELDS = {"input_price_per_million_tokens", "output_price_per_million_tokens"}
-CONFIG_INT_FIELDS = {"default_parallel_episodes", "codex_timeout_seconds"}
+CONFIG_FLOAT_FIELDS = {"input_price_per_million_tokens", "output_price_per_million_tokens", "default_temperature"}
+CONFIG_INT_FIELDS = {"default_parallel_episodes", "codex_timeout_seconds", "default_long_episode_threshold_chars"}
+CONFIG_BOOL_FIELDS = {
+    "default_preserve_japanese_suffixes",
+    "default_translate_author_notes",
+    "default_keep_ruby_as_parentheses",
+    "default_split_long_episode",
+    "default_run_qa_pass",
+    "default_run_term_consistency_pass",
+    "default_check_missing_paragraphs",
+    "default_compare_length_ratio",
+    "default_include_glossary",
+    "default_include_author_notes",
+    "default_epub_vertical_writing",
+    "show_policy_details_on_start",
+    "prompt_source_mode_on_start",
+    "show_new_project_review",
+}
+CONFIG_LIST_FIELDS = {"default_output_formats", "default_banned_terms"}
 TRANSLATION_BACKENDS = {"auto", "openai", "codex", "dry-run"}
+SOURCE_MODES = {"url", "file", "clipboard", "manual", "editor"}
+TRANSLATION_PRESETS = {"fast", "balanced", "literary", "literal", "glossary"}
+REASONING_EFFORTS = {"low", "medium", "high"}
+GLOSSARY_STRICTNESS = {"low", "medium", "high", "strict"}
+URL_COLLECTION_MODES = {"auto", "user-file", "ask"}
+EXPORT_FORMATS = {"txt", "docx", "epub"}
 
 
 @dataclass(slots=True)
@@ -41,7 +72,33 @@ class AppConfig:
     base_dir: str = "projects"
     default_model: str = "gpt-5.5"
     default_reasoning_effort: str = "medium"
+    default_translation_preset: str = "balanced"
+    default_source_mode: str = "url"
+    default_episode_spec: str = "all"
+    default_style: str = "korean_webnovel_balanced"
+    default_honorific_policy: str = "adaptive"
+    default_preserve_japanese_suffixes: bool = False
+    default_translate_author_notes: bool = True
+    default_keep_ruby_as_parentheses: bool = False
+    default_glossary_strictness: str = "high"
+    default_temperature: float = 0.3
     default_parallel_episodes: int = 4
+    default_split_long_episode: bool = False
+    default_long_episode_threshold_chars: int = 20000
+    default_run_qa_pass: bool = True
+    default_run_term_consistency_pass: bool = True
+    default_check_missing_paragraphs: bool = True
+    default_compare_length_ratio: bool = True
+    default_banned_terms: list[str] = field(default_factory=list)
+    default_output_formats: list[str] = field(default_factory=lambda: ["txt", "docx", "epub"])
+    default_include_glossary: bool = True
+    default_include_author_notes: bool = True
+    default_epub_vertical_writing: bool = False
+    default_url_collection_mode: str = "auto"
+    default_permission_note: str = "user confirmed authorized personal use in NovelTrans settings"
+    show_policy_details_on_start: bool = False
+    prompt_source_mode_on_start: bool = False
+    show_new_project_review: bool = False
     watermark: str = "개인 번역본 / 재배포 금지 / 원저작권은 원작자에게 있음"
     credential_backend: str = "auto"
     openai_organization: str = ""
@@ -92,11 +149,35 @@ def _config_from_values(values: dict[str, Any]) -> AppConfig:
         value = values[field]
         if isinstance(value, bool) or not isinstance(value, int):
             raise ConfigurationError(f"Malformed config field {field}: expected integer")
+    for field in CONFIG_BOOL_FIELDS:
+        if not isinstance(values[field], bool):
+            raise ConfigurationError(f"Malformed config field {field}: expected boolean")
+    for field in CONFIG_LIST_FIELDS:
+        value = values[field]
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ConfigurationError(f"Malformed config field {field}: expected string list")
     if not 1 <= values["default_parallel_episodes"] <= 8:
         raise ConfigurationError("Malformed config field default_parallel_episodes: expected 1-8")
     if not 30 <= values["codex_timeout_seconds"] <= 7200:
         raise ConfigurationError("Malformed config field codex_timeout_seconds: expected 30-7200")
+    if not 1000 <= values["default_long_episode_threshold_chars"] <= 200000:
+        raise ConfigurationError("Malformed config field default_long_episode_threshold_chars: expected 1000-200000")
     values["default_translation_backend"] = _normalize_backend(values["default_translation_backend"])
+    if values["default_source_mode"] not in SOURCE_MODES:
+        raise ConfigurationError("Malformed config field default_source_mode")
+    if values["default_translation_preset"] not in TRANSLATION_PRESETS:
+        raise ConfigurationError("Malformed config field default_translation_preset")
+    if values["default_reasoning_effort"] not in REASONING_EFFORTS:
+        raise ConfigurationError("Malformed config field default_reasoning_effort")
+    if values["default_glossary_strictness"] not in GLOSSARY_STRICTNESS:
+        raise ConfigurationError("Malformed config field default_glossary_strictness")
+    if values["default_url_collection_mode"] not in URL_COLLECTION_MODES:
+        raise ConfigurationError("Malformed config field default_url_collection_mode")
+    output_formats = [item.strip().lower() for item in values["default_output_formats"] if item.strip()]
+    if not output_formats or set(output_formats) - EXPORT_FORMATS:
+        raise ConfigurationError("Malformed config field default_output_formats")
+    values["default_output_formats"] = output_formats
+    values["default_banned_terms"] = [item.strip() for item in values["default_banned_terms"] if item.strip()]
     if not values["codex_command"].strip():
         raise ConfigurationError("Malformed config field codex_command: expected non-empty string")
     for field in CONFIG_FLOAT_FIELDS:
@@ -106,6 +187,8 @@ def _config_from_values(values: dict[str, Any]) -> AppConfig:
         if value < 0:
             raise ConfigurationError(f"Malformed config field {field}: expected non-negative number")
         values[field] = float(value)
+    if values["default_temperature"] > 2.0:
+        raise ConfigurationError("Malformed config field default_temperature: expected 0-2")
     return AppConfig(**values)
 
 

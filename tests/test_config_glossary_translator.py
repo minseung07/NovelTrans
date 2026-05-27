@@ -13,8 +13,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from noveltrans.config import AppConfig, ConfigManager, CredentialStore
-import noveltrans.cli as cli_module
-from noveltrans.cli import _capture_editor_text_to_temp_file, _has_openai_credentials, main
+import noveltrans.cli_commands as cli_commands_module
+from noveltrans.cli import main
 from noveltrans.estimate import estimate_translation
 from noveltrans.errors import ConfigurationError, TranslationError
 from noveltrans.glossary import GlossaryManager
@@ -25,6 +25,7 @@ from noveltrans.prompts import build_episode_payload
 from noveltrans.qa import QAEngine
 from noveltrans.translator import CodexCLI, CodexTranslator, DryRunTranslator, OpenAITranslator
 from noveltrans.translator import extract_translation_payload, result_from_payload
+from noveltrans.wizard import _capture_editor_text_to_temp_file, _has_openai_credentials
 
 
 class ConfigGlossaryTranslatorTests(unittest.TestCase):
@@ -37,6 +38,12 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
                 default_translation_backend="codex",
                 codex_command="codex-custom",
                 codex_timeout_seconds=120,
+                default_source_mode="file",
+                default_episode_spec="1-5",
+                default_translation_preset="glossary",
+                default_output_formats=["txt", "epub"],
+                default_run_qa_pass=False,
+                default_url_collection_mode="user-file",
             )
             manager.save(config)
             loaded = manager.load()
@@ -44,6 +51,12 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             self.assertEqual(loaded.default_translation_backend, "codex")
             self.assertEqual(loaded.codex_command, "codex-custom")
             self.assertEqual(loaded.codex_timeout_seconds, 120)
+            self.assertEqual(loaded.default_source_mode, "file")
+            self.assertEqual(loaded.default_episode_spec, "1-5")
+            self.assertEqual(loaded.default_translation_preset, "glossary")
+            self.assertEqual(loaded.default_output_formats, ["txt", "epub"])
+            self.assertFalse(loaded.default_run_qa_pass)
+            self.assertEqual(loaded.default_url_collection_mode, "user-file")
 
     def test_malformed_config_file_is_user_facing_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -61,6 +74,12 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):
                 manager.load()
             manager.config_path.write_text('{"default_translation_backend": "unknown"}', encoding="utf-8")
+            with self.assertRaises(ConfigurationError):
+                manager.load()
+            manager.config_path.write_text('{"default_output_formats": ["txt", "pdf"]}', encoding="utf-8")
+            with self.assertRaises(ConfigurationError):
+                manager.load()
+            manager.config_path.write_text('{"show_new_project_review": "false"}', encoding="utf-8")
             with self.assertRaises(ConfigurationError):
                 manager.load()
 
@@ -124,7 +143,7 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
                 patch("sys.stdin", StringIO("sk-login\n")),
                 patch.object(CredentialStore, "_set_keyring", lambda self, api_key: False),
                 patch.object(CredentialStore, "_get_keyring", lambda self: ""),
-                patch.object(cli_module.webbrowser, "open", return_value=True) as open_browser,
+                patch.object(cli_commands_module.webbrowser, "open", return_value=True) as open_browser,
             ):
                 code = main(["auth", "login", "--config-dir", tmp, "--from-stdin"])
             self.assertEqual(code, 0)
@@ -167,14 +186,14 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
                 return True, f"device_auth={device_auth}"
 
         output = StringIO()
-        with redirect_stdout(output), patch.object(cli_module, "CodexCLI", FakeCodex):
+        with redirect_stdout(output), patch.object(cli_commands_module, "CodexCLI", FakeCodex):
             code = main(["auth", "codex-status", "--command", "codex-test"])
         self.assertEqual(code, 0)
         self.assertIn("codex_cli=installed", output.getvalue())
         self.assertIn("codex_login=authenticated", output.getvalue())
 
         output = StringIO()
-        with redirect_stdout(output), patch.object(cli_module, "CodexCLI", FakeCodex):
+        with redirect_stdout(output), patch.object(cli_commands_module, "CodexCLI", FakeCodex):
             code = main(["auth", "codex-login", "--command", "codex-test", "--device-auth"])
         self.assertEqual(code, 0)
         self.assertIn("codex_login=authenticated", output.getvalue())
@@ -222,7 +241,7 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             output = StringIO()
-            with redirect_stdout(output), patch.object(cli_module, "CredentialStore", EmptyStore):
+            with redirect_stdout(output), patch.object(cli_commands_module, "CredentialStore", EmptyStore):
                 code = main(["doctor", "--config-dir", tmp, "--base-dir", str(Path(tmp) / "projects")])
             self.assertEqual(code, 0)
             text = output.getvalue()
@@ -244,7 +263,7 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             output = StringIO()
-            with redirect_stdout(output), patch.object(cli_module, "CredentialStore", EmptyStore):
+            with redirect_stdout(output), patch.object(cli_commands_module, "CredentialStore", EmptyStore):
                 code = main(["doctor", "--config-dir", tmp, "--base-dir", str(Path(tmp) / "projects"), "--strict"])
             self.assertEqual(code, 1)
             self.assertIn("strict_failure=credentials_missing", output.getvalue())

@@ -25,6 +25,7 @@ from .models import ExportOptions, GlossaryEntry, ParallelOptions, QualityOption
 from .policy import SAFE_POLICY_TEXT, PolicyEngine
 from .progress import format_progress_lines, snapshot_project_progress, target_episode_numbers
 from .project import Project, ProjectManager
+from .status import project_status_text
 from .translator import CodexCLI, normalize_translation_backend
 from .verify import verify_project
 from .workflow import (
@@ -88,9 +89,6 @@ class TerminalPrompt:
 
     def _bold(self, value: str) -> str:
         return self._paint(value, "1")
-
-    def _dim(self, value: str) -> str:
-        return self._paint(value, "2")
 
     def _muted(self, value: str) -> str:
         return self._paint(value, "38;5;245")
@@ -474,7 +472,7 @@ def _new_project_wizard(prompt: TerminalPrompt, manager: ProjectManager, config:
                     required=True,
                     body="폴더 이름으로도 쓰입니다. 한글도 가능하지만, 짧고 구분되는 이름이 관리하기 쉽습니다.",
                 )
-                step = "source"
+                step = "source" if config.prompt_source_mode_on_start else "source_detail"
             elif step == "source":
                 source_mode = prompt.select(
                     "원본 입력 방식",
@@ -489,7 +487,7 @@ def _new_project_wizard(prompt: TerminalPrompt, manager: ProjectManager, config:
                     default=draft.source_mode,
                     body=[
                         "번역/출력/모델/병렬 처리 값은 설정 화면의 기본값을 그대로 사용합니다.",
-                        "필요하면 마지막 확인 화면에서만 고급 설정을 바꿀 수 있습니다.",
+                        "시작 절차를 줄이려면 설정에서 기본 원본 입력 방식을 바꾸세요.",
                     ],
                 )
                 if source_mode == "back":
@@ -497,8 +495,21 @@ def _new_project_wizard(prompt: TerminalPrompt, manager: ProjectManager, config:
                 draft.source_mode = source_mode
                 step = "source_detail"
             elif step == "source_detail":
-                _collect_new_project_source(prompt, draft)
-                step = "summary"
+                _collect_new_project_source(prompt, draft, config)
+                if config.show_new_project_review:
+                    step = "summary"
+                    continue
+                try:
+                    confirmed = _confirm_new_project_rights(prompt, draft)
+                except BackRequested:
+                    step = "source" if config.prompt_source_mode_on_start else "name"
+                    continue
+                if not confirmed:
+                    step = "summary"
+                    continue
+                project = _create_project_from_draft(manager, draft)
+                _run_project_translation(prompt, project, draft.translation.backend, resume=False, confirm_start=False)
+                return
             elif step == "summary":
                 action = prompt.select(
                     "새 프로젝트 확인",
@@ -541,29 +552,72 @@ def _new_project_wizard(prompt: TerminalPrompt, manager: ProjectManager, config:
                     if not confirmed:
                         continue
                     project = _create_project_from_draft(manager, draft)
-                    _run_project_translation(prompt, project, draft.translation.backend, resume=False)
+                    _run_project_translation(prompt, project, draft.translation.backend, resume=False, confirm_start=False)
                     return
         except BackRequested:
             step = _previous_new_project_step(step)
 
 
 def _new_project_draft_from_config(config: AppConfig) -> NewProjectDraft:
-    translation = _translation_options_for_preset("balanced", config.default_model, config.default_reasoning_effort)
-    translation.backend = config.default_translation_backend
     return NewProjectDraft(
         name="my_novel",
-        source_mode="url",
+        source_mode=config.default_source_mode,
         url="",
         input_path=None,
         fallback_file=None,
-        episode_spec="all",
-        translation=translation,
-        parallel=ParallelOptions(max_parallel_episodes=config.default_parallel_episodes),
-        quality=QualityOptions(),
-        export=ExportOptions(watermark=config.watermark),
+        episode_spec=config.default_episode_spec,
+        translation=_translation_options_from_config(config),
+        parallel=_parallel_options_from_config(config),
+        quality=_quality_options_from_config(config),
+        export=_export_options_from_config(config),
         allow_auto_fetch=False,
         permission_note="",
         policy_summary="",
+    )
+
+
+def _translation_options_from_config(config: AppConfig) -> TranslationOptions:
+    options = _translation_options_for_preset(
+        config.default_translation_preset,
+        config.default_model,
+        config.default_reasoning_effort,
+    )
+    options.backend = config.default_translation_backend
+    options.style = config.default_style
+    options.honorific_policy = config.default_honorific_policy
+    options.preserve_japanese_suffixes = config.default_preserve_japanese_suffixes
+    options.translate_author_notes = config.default_translate_author_notes
+    options.keep_ruby_as_parentheses = config.default_keep_ruby_as_parentheses
+    options.glossary_strictness = config.default_glossary_strictness
+    options.temperature = config.default_temperature
+    return options
+
+
+def _parallel_options_from_config(config: AppConfig) -> ParallelOptions:
+    return ParallelOptions(
+        max_parallel_episodes=config.default_parallel_episodes,
+        split_long_episode=config.default_split_long_episode,
+        long_episode_threshold_chars=config.default_long_episode_threshold_chars,
+    )
+
+
+def _quality_options_from_config(config: AppConfig) -> QualityOptions:
+    return QualityOptions(
+        run_qa_pass=config.default_run_qa_pass,
+        run_term_consistency_pass=config.default_run_term_consistency_pass,
+        check_missing_paragraphs=config.default_check_missing_paragraphs,
+        compare_length_ratio=config.default_compare_length_ratio,
+        banned_terms=list(config.default_banned_terms),
+    )
+
+
+def _export_options_from_config(config: AppConfig) -> ExportOptions:
+    return ExportOptions(
+        formats=list(config.default_output_formats),
+        include_glossary=config.default_include_glossary,
+        include_author_notes=config.default_include_author_notes,
+        watermark=config.watermark,
+        epub_vertical_writing=config.default_epub_vertical_writing,
     )
 
 
@@ -575,7 +629,7 @@ def _previous_new_project_step(step: str) -> str:
     }.get(step, "name")
 
 
-def _collect_new_project_source(prompt: TerminalPrompt, draft: NewProjectDraft) -> None:
+def _collect_new_project_source(prompt: TerminalPrompt, draft: NewProjectDraft, config: AppConfig) -> None:
     draft.input_path = None
     draft.fallback_file = None
     draft.policy_summary = ""
@@ -587,12 +641,44 @@ def _collect_new_project_source(prompt: TerminalPrompt, draft: NewProjectDraft) 
         policy_engine = PolicyEngine()
         policy = policy_engine.effective_policy(connector.get_policy())
         draft.policy_summary = policy_engine.describe(policy)
+        if config.show_policy_details_on_start:
+            prompt.clear()
+            prompt.banner("사이트 감지", policy.site_name)
+            prompt.panel("정책 게이트", draft.policy_summary)
         if policy.auto_fetch_allowed:
+            action = config.default_url_collection_mode
+            if action == "ask":
+                action = prompt.select(
+                    "URL 처리 방식",
+                    [
+                        Choice("설정값대로 자동 수집", "auto", "정책 조건과 권한 근거를 남기고 진행"),
+                        Choice("사용자가 제공한 본문 파일 사용", "user-file", "직접 저장한 TXT/HTML/ZIP 또는 붙여넣기"),
+                        Choice("원본 입력 다시 선택", "back"),
+                    ],
+                    default="auto" if policy.grade == "A" else "user-file",
+                    body=[
+                        "이 선택은 설정에서 기본값으로 바꿀 수 있습니다.",
+                        "확실하지 않으면 사용자 제공 본문 방식을 선택하세요.",
+                    ],
+                )
+                if action == "back":
+                    raise BackRequested
+            if action == "user_file":
+                action = "user-file"
+            if action == "user-file":
+                draft.fallback_file = _collect_user_source_file_wizard(prompt)
+                return
             draft.allow_auto_fetch = True
-            if policy.requires_user_permission or policy.grade == "B":
-                draft.permission_note = "user confirmed authorized personal use in NovelTrans wizard"
+            draft.permission_note = config.default_permission_note
             return
-        prompt.panel("자동 수집 차단", "이 사이트는 자동 본문 수집이 꺼져 있습니다. 사용자가 제공한 원문만 처리합니다.")
+        if config.show_policy_details_on_start:
+            prompt.panel(
+                "자동 수집 차단",
+                [
+                    "이 사이트는 URL에서 본문을 자동으로 가져오지 않습니다.",
+                    "URL은 작품 식별/메타데이터 보존용으로만 쓰고, 본문은 사용자가 직접 제공한 파일이나 붙여넣기를 사용합니다.",
+                ],
+            )
         draft.fallback_file = _collect_user_source_file_wizard(prompt)
         return
     draft.input_path = _source_file_from_mode(prompt, draft.source_mode)
@@ -723,58 +809,6 @@ def _create_project_from_draft(manager: ProjectManager, draft: NewProjectDraft) 
     )
 
 
-def _create_project_from_url_wizard(
-    prompt: TerminalPrompt,
-    manager: ProjectManager,
-    name: str,
-    translation: TranslationOptions,
-    parallel: ParallelOptions,
-    quality: QualityOptions,
-    export: ExportOptions,
-    episode_spec: str,
-) -> Project:
-    url = prompt.input("소설 URL", required=True)
-    connector = detect_connector(url)
-    policy_engine = PolicyEngine()
-    policy = policy_engine.effective_policy(connector.get_policy())
-    prompt.clear()
-    prompt.banner("사이트 감지")
-    prompt.panel("정책 게이트", policy_engine.describe(policy))
-
-    fallback_file = None
-    allow_auto_fetch = False
-    permission_note = ""
-    if policy.auto_fetch_allowed:
-        allow_auto_fetch = prompt.confirm("이 URL의 자동 수집 조건을 충족하며 처리 권한이 있다", default=False)
-        if allow_auto_fetch or policy.requires_user_permission:
-            permission_note = prompt.input(
-                "권한/라이선스 근거 메모",
-                "user confirmed authorized personal use",
-                body=[
-                    "감사 로그에 남길 짧은 메모입니다.",
-                    "예: author permission, public domain, authorized personal use",
-                ],
-            )
-    else:
-        prompt.panel("자동 수집 차단", "이 사이트는 자동 본문 수집이 꺼져 있습니다. 사용자가 제공한 원문만 처리합니다.")
-        prompt.pause()
-        fallback_file = _collect_user_source_file_wizard(prompt)
-
-    return create_project_from_url(
-        manager=manager,
-        name=name,
-        url=url,
-        translation=translation,
-        parallel=parallel,
-        quality=quality,
-        export=export,
-        episode_spec=episode_spec,
-        user_permission=allow_auto_fetch,
-        permission_evidence=permission_note,
-        fallback_file=fallback_file,
-    )
-
-
 def _resume_project_wizard(prompt: TerminalPrompt, manager: ProjectManager) -> None:
     project = _select_project_wizard(prompt, manager)
     while True:
@@ -791,7 +825,7 @@ def _resume_project_wizard(prompt: TerminalPrompt, manager: ProjectManager) -> N
                 Choice("메인으로", "back"),
             ],
             default="translate",
-            body=[f"프로젝트: {manifest.name}", str(project.root), "", _project_status_text(project)],
+            body=[f"프로젝트: {manifest.name}", str(project.root), "", project_status_text(project)],
         )
         if action == "back":
             return
@@ -895,24 +929,25 @@ def _settings_wizard(prompt: TerminalPrompt, config_manager: ConfigManager, conf
     while True:
         prompt.clear()
         action = prompt.select(
-            "변경할 항목",
+            "설정",
             [
-                Choice("프로젝트 기본 디렉터리", "base_dir"),
-                Choice("기본 모델", "model"),
-                Choice("기본 번역 백엔드", "backend"),
-                Choice("기본 동시 번역 화수", "parallel"),
-                Choice("워터마크", "watermark"),
-                Choice("OpenAI API key 저장/교체", "api_key"),
-                Choice("OpenAI access token 저장/교체", "access_token"),
-                Choice("Codex 로그인 상태 확인", "codex_status"),
+                Choice("시작 흐름 기본값", "start", "새 번역 시작 때 물어볼 항목 최소화"),
+                Choice("번역 기본값", "translation", "모드, 모델, 문체, 용어집 엄격도"),
+                Choice("병렬/QA 기본값", "quality", "동시 작업, 긴 화 분할, QA 검사"),
+                Choice("출력 기본값", "export", "TXT/DOCX/EPUB, 용어집, 워터마크"),
+                Choice("저장/인증", "account", "프로젝트 위치, OpenAI, Codex"),
                 Choice("저장하고 메인으로", "back"),
             ],
             default="back",
             body=[
                 f"프로젝트 디렉터리: {config.base_dir}",
+                f"시작 기본값: {config.default_source_mode}, {config.default_episode_spec}, URL={config.default_url_collection_mode}",
                 f"기본 모델: {config.default_model}",
                 f"기본 백엔드: {config.default_translation_backend}",
+                f"번역 모드: {config.default_translation_preset}",
                 f"동시 번역 화수: {config.default_parallel_episodes}",
+                f"출력: {', '.join(config.default_output_formats)}",
+                f"시작 전 확인 화면: {'표시' if config.show_new_project_review else '건너뜀'}",
                 f"OpenAI API key: {'설정됨' if store.get_api_key() else '없음'}",
                 f"OpenAI access token: {'설정됨' if store.get_access_token() else '없음'}",
             ],
@@ -920,6 +955,258 @@ def _settings_wizard(prompt: TerminalPrompt, config_manager: ConfigManager, conf
         if action == "back":
             config_manager.save(config)
             return config
+        if action == "start":
+            _settings_start_defaults(prompt, config)
+        elif action == "translation":
+            _settings_translation_defaults(prompt, config)
+        elif action == "quality":
+            _settings_quality_defaults(prompt, config)
+        elif action == "export":
+            _settings_export_defaults(prompt, config)
+        elif action == "account":
+            _settings_account_defaults(prompt, config, store)
+        config_manager.save(config)
+
+
+def _settings_start_defaults(prompt: TerminalPrompt, config: AppConfig) -> None:
+    while True:
+        action = prompt.select(
+            "시작 흐름 기본값",
+            [
+                Choice("기본 원본 입력 방식", "source", config.default_source_mode),
+                Choice("시작 때 원본 방식 물어보기", "prompt_source", "끄면 설정 기본값을 바로 사용"),
+                Choice("기본 화수 범위", "episodes", config.default_episode_spec),
+                Choice("URL 처리 방식", "url_mode", config.default_url_collection_mode),
+                Choice("권한/약관 기본 메모", "permission_note"),
+                Choice("정책 상세 화면", "policy_details", "끄면 차단 사이트에서만 파일 입력으로 진행"),
+                Choice("시작 전 요약/고급 설정 화면", "review", "끄면 권한 확인 후 바로 시작"),
+                Choice("설정으로 돌아가기", "back"),
+            ],
+            default="back",
+            body=[
+                f"원본 방식: {config.default_source_mode}",
+                f"원본 방식 질문: {'사용' if config.prompt_source_mode_on_start else '생략'}",
+                f"화수 범위: {config.default_episode_spec}",
+                f"URL 처리: {config.default_url_collection_mode}",
+                f"정책 상세: {'표시' if config.show_policy_details_on_start else '생략'}",
+                f"시작 전 요약: {'표시' if config.show_new_project_review else '생략'}",
+            ],
+        )
+        if action == "back":
+            return
+        if action == "source":
+            config.default_source_mode = prompt.select(
+                "기본 원본 입력 방식",
+                [
+                    Choice("URL 입력", "url"),
+                    Choice("TXT/HTML/ZIP 파일", "file"),
+                    Choice("클립보드/붙여넣기", "clipboard"),
+                    Choice("터미널 직접 입력", "manual"),
+                    Choice("외부 편집기", "editor"),
+                ],
+                default=config.default_source_mode,
+            )
+        elif action == "prompt_source":
+            config.prompt_source_mode_on_start = prompt.confirm(
+                "새 프로젝트 시작 때 원본 입력 방식을 물어볼까요",
+                config.prompt_source_mode_on_start,
+            )
+        elif action == "episodes":
+            config.default_episode_spec = _choose_episode_spec_wizard(prompt, "기본 화수 범위")
+        elif action == "url_mode":
+            config.default_url_collection_mode = prompt.select(
+                "URL 처리 방식",
+                [
+                    Choice("자동 수집 우선", "auto", "정책상 허용되면 바로 URL 본문 수집"),
+                    Choice("사용자 제공 본문 우선", "user-file", "URL은 메타데이터용, 본문은 파일/붙여넣기"),
+                    Choice("매번 물어보기", "ask", "사이트 감지 후 선택"),
+                ],
+                default=config.default_url_collection_mode,
+            )
+        elif action == "permission_note":
+            config.default_permission_note = prompt.input(
+                "권한/약관 기본 메모",
+                config.default_permission_note,
+                required=True,
+                body="자동 수집 허용 URL에서 감사 로그에 남길 기본 메모입니다.",
+            )
+        elif action == "policy_details":
+            config.show_policy_details_on_start = prompt.confirm(
+                "새 프로젝트 시작 중 정책 상세 화면을 보여줄까요",
+                config.show_policy_details_on_start,
+            )
+        elif action == "review":
+            config.show_new_project_review = prompt.confirm(
+                "번역 시작 전 요약/고급 설정 화면을 보여줄까요",
+                config.show_new_project_review,
+            )
+
+
+def _settings_translation_defaults(prompt: TerminalPrompt, config: AppConfig) -> None:
+    while True:
+        action = prompt.select(
+            "번역 기본값",
+            [
+                Choice("번역 모드", "preset", config.default_translation_preset),
+                Choice("번역 백엔드", "backend", config.default_translation_backend),
+                Choice("모델", "model", config.default_model),
+                Choice("추론 강도", "reasoning", config.default_reasoning_effort),
+                Choice("문체 프로필", "style", config.default_style),
+                Choice("존댓말/호칭 정책", "honorific", config.default_honorific_policy),
+                Choice("용어집 엄격도", "glossary", config.default_glossary_strictness),
+                Choice("문장 변형 정도", "temperature", str(config.default_temperature)),
+                Choice("일본어 호칭 접미사 보존", "suffixes"),
+                Choice("작가 후기 번역", "translate_notes"),
+                Choice("루비 괄호 보존", "ruby"),
+                Choice("설정으로 돌아가기", "back"),
+            ],
+            default="back",
+            body=[
+                f"{config.default_translation_preset} / {config.default_model} / {config.default_translation_backend}",
+                f"{config.default_style} / {config.default_honorific_policy}",
+            ],
+        )
+        if action == "back":
+            return
+        if action == "preset":
+            config.default_translation_preset = prompt.select(
+                "번역 모드",
+                [
+                    Choice("빠른 초벌 번역", "fast", "속도 우선"),
+                    Choice("균형 번역", "balanced", "일반 추천값"),
+                    Choice("문학적 자연화", "literary", "한국 웹소설 문체 자연화"),
+                    Choice("직역 보존", "literal", "원문 구조 최대 보존"),
+                    Choice("용어 일관성 최우선", "glossary", "고유명사/설정 일관성 강화"),
+                ],
+                default=config.default_translation_preset,
+            )
+        elif action == "backend":
+            config.default_translation_backend = _choose_backend_wizard(prompt, config.default_translation_backend)
+        elif action == "model":
+            config.default_model = _choose_model_wizard(prompt, config.default_model, title="기본 모델")
+        elif action == "reasoning":
+            config.default_reasoning_effort = _choose_reasoning_effort_wizard(prompt, config.default_reasoning_effort)
+        elif action == "style":
+            config.default_style = _choose_style_wizard(prompt, config.default_style)
+        elif action == "honorific":
+            config.default_honorific_policy = _choose_honorific_policy_wizard(prompt, config.default_honorific_policy)
+        elif action == "glossary":
+            config.default_glossary_strictness = _choose_glossary_strictness_wizard(prompt, config.default_glossary_strictness)
+        elif action == "temperature":
+            config.default_temperature = _choose_temperature_wizard(prompt, config.default_temperature) or 0.3
+        elif action == "suffixes":
+            config.default_preserve_japanese_suffixes = prompt.confirm(
+                "일본어 호칭 접미사를 기본 보존할까요",
+                config.default_preserve_japanese_suffixes,
+            )
+        elif action == "translate_notes":
+            config.default_translate_author_notes = prompt.confirm("작가 후기를 기본 번역할까요", config.default_translate_author_notes)
+        elif action == "ruby":
+            config.default_keep_ruby_as_parentheses = prompt.confirm("루비를 괄호로 기본 보존할까요", config.default_keep_ruby_as_parentheses)
+
+
+def _settings_quality_defaults(prompt: TerminalPrompt, config: AppConfig) -> None:
+    while True:
+        action = prompt.select(
+            "병렬/QA 기본값",
+            [
+                Choice("동시 번역 화수", "parallel", str(config.default_parallel_episodes)),
+                Choice("긴 화 내부 분할", "split"),
+                Choice("긴 화 기준 글자 수", "threshold", str(config.default_long_episode_threshold_chars)),
+                Choice("QA 패스", "qa"),
+                Choice("용어 일관성 검사", "term"),
+                Choice("누락 문단 검사", "missing"),
+                Choice("길이 비율 검사", "ratio"),
+                Choice("금칙어", "banned"),
+                Choice("설정으로 돌아가기", "back"),
+            ],
+            default="back",
+            body=[
+                f"동시 번역: {config.default_parallel_episodes}",
+                f"긴 화 분할: {'사용' if config.default_split_long_episode else '사용 안 함'} / {config.default_long_episode_threshold_chars}자",
+                f"QA: {'사용' if config.default_run_qa_pass else '사용 안 함'}",
+            ],
+        )
+        if action == "back":
+            return
+        if action == "parallel":
+            config.default_parallel_episodes = prompt.integer("기본 동시 번역 화수", config.default_parallel_episodes, 1, 8)
+        elif action == "split":
+            config.default_split_long_episode = prompt.confirm("긴 화 내부 분할을 기본 사용할까요", config.default_split_long_episode)
+        elif action == "threshold":
+            config.default_long_episode_threshold_chars = _choose_long_episode_threshold_wizard(
+                prompt,
+                config.default_long_episode_threshold_chars,
+            )
+        elif action == "qa":
+            config.default_run_qa_pass = prompt.confirm("QA 패스를 기본 실행할까요", config.default_run_qa_pass)
+        elif action == "term":
+            config.default_run_term_consistency_pass = prompt.confirm("용어 일관성 검사를 기본 실행할까요", config.default_run_term_consistency_pass)
+        elif action == "missing":
+            config.default_check_missing_paragraphs = prompt.confirm("누락 문단 검사를 기본 실행할까요", config.default_check_missing_paragraphs)
+        elif action == "ratio":
+            config.default_compare_length_ratio = prompt.confirm("길이 비율 검사를 기본 실행할까요", config.default_compare_length_ratio)
+        elif action == "banned":
+            raw = prompt.input("금칙어", ", ".join(config.default_banned_terms), body="쉼표로 구분합니다.")
+            config.default_banned_terms = [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _settings_export_defaults(prompt: TerminalPrompt, config: AppConfig) -> None:
+    while True:
+        action = prompt.select(
+            "출력 기본값",
+            [
+                Choice("출력 형식", "formats", ", ".join(config.default_output_formats)),
+                Choice("용어집 부록 포함", "glossary"),
+                Choice("작가 후기 출력", "author_notes"),
+                Choice("EPUB 세로쓰기", "vertical"),
+                Choice("워터마크", "watermark"),
+                Choice("설정으로 돌아가기", "back"),
+            ],
+            default="back",
+            body=[
+                f"출력: {', '.join(config.default_output_formats)}",
+                f"용어집: {'포함' if config.default_include_glossary else '제외'}",
+                f"작가 후기: {'포함' if config.default_include_author_notes else '제외'}",
+            ],
+        )
+        if action == "back":
+            return
+        if action == "formats":
+            config.default_output_formats = _choose_formats(prompt, defaults=config.default_output_formats)
+        elif action == "glossary":
+            config.default_include_glossary = prompt.confirm("용어집 부록을 기본 포함할까요", config.default_include_glossary)
+        elif action == "author_notes":
+            config.default_include_author_notes = prompt.confirm("출력에 작가 후기를 기본 포함할까요", config.default_include_author_notes)
+        elif action == "vertical":
+            config.default_epub_vertical_writing = prompt.confirm("EPUB 세로쓰기를 기본 사용할까요", config.default_epub_vertical_writing)
+        elif action == "watermark":
+            config.watermark = prompt.input("워터마크", config.watermark)
+
+
+def _settings_account_defaults(prompt: TerminalPrompt, config: AppConfig, store: CredentialStore) -> None:
+    while True:
+        action = prompt.select(
+            "저장/인증",
+            [
+                Choice("프로젝트 기본 디렉터리", "base_dir", config.base_dir),
+                Choice("OpenAI API key 저장/교체", "api_key"),
+                Choice("OpenAI access token 저장/교체", "access_token"),
+                Choice("Codex 로그인 상태 확인", "codex_status"),
+                Choice("Codex CLI 명령", "codex_command", config.codex_command),
+                Choice("Codex 제한 시간", "codex_timeout", str(config.codex_timeout_seconds)),
+                Choice("토큰 단가", "pricing"),
+                Choice("설정으로 돌아가기", "back"),
+            ],
+            default="back",
+            body=[
+                f"프로젝트 디렉터리: {config.base_dir}",
+                f"OpenAI API key: {'설정됨' if store.get_api_key() else '없음'}",
+                f"OpenAI access token: {'설정됨' if store.get_access_token() else '없음'}",
+            ],
+        )
+        if action == "back":
+            return
         if action == "base_dir":
             config.base_dir = prompt.input(
                 "프로젝트 기본 디렉터리",
@@ -927,14 +1214,6 @@ def _settings_wizard(prompt: TerminalPrompt, config_manager: ConfigManager, conf
                 required=True,
                 body="새 프로젝트가 저장될 위치입니다. 상대 경로는 현재 실행 위치 기준입니다.",
             )
-        elif action == "model":
-            config.default_model = _choose_model_wizard(prompt, config.default_model, title="기본 모델")
-        elif action == "backend":
-            config.default_translation_backend = _choose_backend_wizard(prompt, config.default_translation_backend)
-        elif action == "parallel":
-            config.default_parallel_episodes = prompt.integer("기본 동시 번역 화수", config.default_parallel_episodes, 1, 8)
-        elif action == "watermark":
-            config.watermark = prompt.input("워터마크", config.watermark)
         elif action == "api_key":
             secret = prompt.input("OpenAI API key", required=True)
             backend = store.set_api_key(secret)
@@ -956,51 +1235,25 @@ def _settings_wizard(prompt: TerminalPrompt, config_manager: ConfigManager, conf
                 lines.append(detail)
             prompt.result("Codex 로그인 상태", lines, ok=authenticated)
             prompt.pause()
-        config_manager.save(config)
-
-
-def _collect_translation_options(
-    prompt: TerminalPrompt,
-    config: AppConfig,
-) -> tuple[TranslationOptions, ParallelOptions, QualityOptions, ExportOptions]:
-    preset = prompt.select(
-        "번역 모드",
-        [
-            Choice("빠른 초벌 번역", "fast", "속도 우선"),
-            Choice("균형 번역", "balanced", "일반 추천값"),
-            Choice("문학적 자연화", "literary", "한국 웹소설 문체 자연화"),
-            Choice("직역 보존", "literal", "원문 구조 최대 보존"),
-            Choice("용어 일관성 최우선", "glossary", "고유명사/설정 일관성 강화"),
-            Choice("커스텀", "custom", "세부 옵션 직접 지정"),
-        ],
-        default="balanced",
-        body=[
-            "처음이면 '균형 번역'을 고르세요.",
-            "세부 문체, 용어집 엄격도, 긴 화 분할 같은 값은 '커스텀'에서 선택형으로 조정할 수 있습니다.",
-        ],
-    )
-    backend = _choose_backend_wizard(prompt, config.default_translation_backend)
-    model = _choose_model_wizard(prompt, config.default_model)
-    concurrency = int(
-        prompt.select(
-            "동시 번역 화수",
-            [Choice(str(value), str(value)) for value in (1, 2, 4, 8)],
-            default=str(config.default_parallel_episodes if config.default_parallel_episodes in {1, 2, 4, 8} else 4),
-        )
-    )
-    formats = _choose_formats(prompt)
-    translation = _translation_options_for_preset(preset, model, config.default_reasoning_effort)
-    translation.backend = backend
-    parallel = ParallelOptions(max_parallel_episodes=concurrency)
-    quality = QualityOptions()
-    export = ExportOptions(formats=formats, watermark=config.watermark)
-    if preset == "custom":
-        _customize_options_wizard(prompt, translation, parallel, quality, export)
-    else:
-        quality.run_qa_pass = prompt.confirm("QA 패스 실행", default=True)
-        quality.run_term_consistency_pass = prompt.confirm("용어 일관성 검사", default=True)
-        export.include_author_notes = prompt.confirm("출력에 작가 후기 포함", default=True)
-    return translation, parallel, quality, export
+        elif action == "codex_command":
+            config.codex_command = prompt.input("Codex CLI 명령", config.codex_command, required=True)
+        elif action == "codex_timeout":
+            config.codex_timeout_seconds = prompt.integer("Codex exec 제한 시간(초)", config.codex_timeout_seconds, 30, 7200)
+        elif action == "pricing":
+            config.input_price_per_million_tokens = _input_float_wizard(
+                prompt,
+                "입력 토큰 단가/100만",
+                config.input_price_per_million_tokens,
+                0.0,
+                10000.0,
+            )
+            config.output_price_per_million_tokens = _input_float_wizard(
+                prompt,
+                "출력 토큰 단가/100만",
+                config.output_price_per_million_tokens,
+                0.0,
+                10000.0,
+            )
 
 
 def _translation_options_for_preset(preset: str, model: str, reasoning_effort: str) -> TranslationOptions:
@@ -1330,21 +1583,23 @@ def _run_project_translation(
     project: Project,
     backend: str | None,
     resume: bool,
+    confirm_start: bool = True,
 ) -> None:
     manifest = project.load_manifest()
     selected_backend = backend or manifest.translation.backend
     dry_run = _should_use_dry_run(prompt, selected_backend)
-    estimate = estimate_project_translation(project, resume=resume)
-    summary = [
-        f"프로젝트: {project.root}",
-        f"대상 화수: {estimate.episode_count}",
-        f"예상 토큰: {estimate.estimated_total_tokens}",
-        f"백엔드: {'dry-run' if dry_run else selected_backend}",
-    ]
-    if estimate.estimated_cost is not None:
-        summary.insert(3, f"예상 비용: ${estimate.estimated_cost:.4f}")
-    if not prompt.confirm("번역을 시작할까요", default=True, body=summary):
-        return
+    if confirm_start:
+        estimate = estimate_project_translation(project, resume=resume)
+        summary = [
+            f"프로젝트: {project.root}",
+            f"대상 화수: {estimate.episode_count}",
+            f"예상 토큰: {estimate.estimated_total_tokens}",
+            f"백엔드: {'dry-run' if dry_run else selected_backend}",
+        ]
+        if estimate.estimated_cost is not None:
+            summary.insert(3, f"예상 비용: ${estimate.estimated_cost:.4f}")
+        if not prompt.confirm("번역을 시작할까요", default=True, body=summary):
+            return
     outputs = _run_translation_with_progress_wizard(
         prompt,
         project,
@@ -1522,45 +1777,6 @@ def _select_project_wizard(prompt: TerminalPrompt, manager: ProjectManager) -> P
     return projects[selected]
 
 
-def _project_status_text(project: Project) -> str:
-    db_statuses = project.db.episode_statuses()
-    source_numbers = [episode.episode_no for episode in project.list_source_episodes()]
-    completed: list[int] = []
-    failed: list[int] = []
-    pending: list[int] = []
-    for number in source_numbers:
-        status = db_statuses.get(number, "pending")
-        if status == "completed" and project.translation_path(number).exists():
-            completed.append(number)
-        elif status == "failed":
-            failed.append(number)
-        else:
-            pending.append(number)
-    return "\n".join(
-        [
-            f"완료: {_format_episode_numbers(completed)}",
-            f"실패: {_format_episode_numbers(failed)}",
-            f"미번역: {_format_episode_numbers(pending)}",
-        ]
-    )
-
-
-def _format_episode_numbers(numbers: list[int]) -> str:
-    values = sorted(numbers)
-    if not values:
-        return "없음"
-    ranges: list[str] = []
-    start = previous = values[0]
-    for number in values[1:]:
-        if number == previous + 1:
-            previous = number
-            continue
-        ranges.append(str(start) if start == previous else f"{start}-{previous}")
-        start = previous = number
-    ranges.append(str(start) if start == previous else f"{start}-{previous}")
-    return ", ".join(ranges)
-
-
 def _sync_glossary_to_project_db(project: Project, glossary: GlossaryManager) -> None:
     for entry in glossary.snapshot(limit=10_000):
         project.db.upsert_glossary_entry(entry.source, entry.target, entry.type, entry.confidence, entry.locked)
@@ -1582,12 +1798,6 @@ def _glossary_snapshot_lines(glossary: GlossaryManager) -> list[str]:
         for conflict in conflicts:
             lines.append(f"- {conflict.source}: {conflict.previous} / {conflict.suggested}")
     return lines
-
-
-def _print_glossary_snapshot(glossary: GlossaryManager) -> None:
-    for line in _glossary_snapshot_lines(glossary):
-        print(line)
-    print()
 
 
 def _resolve_conflict_wizard(prompt: TerminalPrompt, project: Project, glossary: GlossaryManager) -> None:
@@ -1630,21 +1840,11 @@ def _verification_lines(project: Project) -> list[str]:
     return lines
 
 
-def _print_verification(project: Project) -> None:
-    for line in _verification_lines(project):
-        print(line)
-
-
 def _quality_report_lines(project: Project) -> list[str]:
     path = project.logs_dir / "quality_report.txt"
     if not path.exists():
         raise NovelTransError(f"품질 리포트가 없습니다: {path}")
     return path.read_text(encoding="utf-8").rstrip().splitlines()
-
-
-def _print_quality_report(project: Project) -> None:
-    for line in _quality_report_lines(project):
-        print(line)
 
 
 def _default_index(options: list[Choice], default: str | None) -> int:

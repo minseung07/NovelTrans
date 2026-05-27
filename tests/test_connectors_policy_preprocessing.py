@@ -229,6 +229,14 @@ class ConnectorPolicyPreprocessingTests(unittest.TestCase):
             permission_evidence="official API terms allow this use",
         )
 
+    def test_policy_description_lists_available_actions(self) -> None:
+        blocked = SyosetuConnector().get_policy()
+        description = PolicyEngine().describe(blocked)
+
+        self.assertIn("가능 작업", description)
+        self.assertIn("메타데이터", description)
+        self.assertIn("사용자가 직접 제공", description)
+
     def test_local_file_connector_detects_txt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "source.txt"

@@ -2,6 +2,23 @@
 
 All notable changes to NovelTrans CLI will be documented in this file.
 
+## [1.0.5] - 2026-05-27
+
+### Added
+
+- Top-level `noveltrans --help` now lists supported subcommands, and command-specific help is available through argparse subcommands.
+- Settings now exposes start-flow, translation, QA, export, and auth/storage groups so advanced choices can be configured before launching translation work.
+- URL policy guidance now lists available actions for automatic collection, metadata-only URLs, user-provided source input, and blocked login/paywall/captcha paths.
+
+### Changed
+
+- New project creation now keeps the start path minimal by using Settings defaults for source mode, episode range, URL collection behavior, translation options, QA, and export formats.
+- Non-interactive command handlers and shared project status formatting were split out of the entry point.
+
+### Removed
+
+- Removed the legacy `--classic` prompt flow so all interactive usage goes through the maintained wizard.
+
 ## [1.0.4] - 2026-05-27
 
 ### Changed
@@ -38,7 +55,7 @@ All notable changes to NovelTrans CLI will be documented in this file.
 ### Added
 
 - Initial NovelTrans CLI release for authorized Japanese web novel translation workflows.
-- Keyboard-driven terminal wizard launched with `noveltrans`, plus legacy `--classic` interface.
+- Keyboard-driven terminal wizard launched with `noveltrans`.
 - Local TXT, HTML, ZIP, clipboard, manual paste, and editor-based source input flows.
 - Site policy gate with built-in connector policies for Aozora Bunko, Syosetu metadata, Kakuyomu, Hameln, pixiv novels, and local files.
 - Restricted-site URL workflows that preserve source metadata while requiring user-provided body text.

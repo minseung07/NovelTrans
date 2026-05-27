@@ -5,9 +5,8 @@
 ## What Works In v1
 
 - Codex/Claude/Hermes-style command-palette terminal wizard launched with `noveltrans`
-- Legacy prompt-based terminal UI preserved with `noveltrans --classic`
 - Guided option screens for episode ranges, models, backends, output formats, custom translation style, glossary strictness, and QA/export toggles
-- Simplified new-project flow that uses Settings defaults first, with advanced choices available only when requested
+- Minimal new-project flow that uses Settings defaults first; source mode, episode range, URL handling, translation style, QA, and output choices live in Settings
 - Live translation progress display with pending, running, completed, and failed episode ranges
 - Local TXT/HTML/ZIP input, clipboard/manual paste, and `$EDITOR` source editing workflows
 - Safety confirmations before project creation
@@ -35,6 +34,15 @@ make sync-frozen
 
 The default terminal wizard is controlled with arrow keys or `j`/`k`, Enter, `b`/Backspace for back, and Space for multi-select prompts.
 
+New translation projects intentionally ask for very little by default: project name, the configured source input, and one rights/no-redistribution confirmation. Use Settings first if you want to change default source mode, URL collection behavior, episode range, backend/model, QA, or output formats.
+
+See available non-interactive commands with:
+
+```bash
+noveltrans --help
+noveltrans run-local --help
+```
+
 If you are not using `uv`, install the package into a virtual environment:
 
 ```bash
@@ -42,12 +50,6 @@ python3 -m venv .venv
 . .venv/bin/activate
 python3 -m pip install -e ".[dev]"
 noveltrans
-```
-
-Use the legacy prompt UI if you want the old line-by-line flow:
-
-```bash
-noveltrans --classic
 ```
 
 For a non-interactive local-file smoke run:
