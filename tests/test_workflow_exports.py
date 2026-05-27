@@ -726,6 +726,98 @@ class WorkflowExportTests(unittest.TestCase):
             self.assertFalse((project_root / "translated" / "episode_001.ko.md").exists())
             self.assertTrue((project_root / "translated" / "episode_002.ko.md").exists())
 
+    def test_run_url_command_can_auto_fetch_kakuyomu_public_episode(self) -> None:
+        import noveltrans.connectors.kakuyomu as kakuyomu
+
+        work_url = "https://kakuyomu.jp/works/111"
+        episode_url = "https://kakuyomu.jp/works/111/episodes/222"
+        state = {
+            "Work:111": {
+                "__typename": "Work",
+                "id": "111",
+                "title": "公開作品",
+                "author": {"__ref": "UserAccount:7"},
+                "publicEpisodeCount": 1,
+                "serialStatus": "RUNNING",
+                "tableOfContentsV2": [{"__ref": "TableOfContentsChapter:"}],
+            },
+            "UserAccount:7": {"__typename": "UserAccount", "activityName": "作者"},
+            "TableOfContentsChapter:": {
+                "__typename": "TableOfContentsChapter",
+                "episodeUnions": [{"__ref": "Episode:222"}],
+            },
+            "Episode:222": {"__typename": "Episode", "id": "222", "title": "第1話 公開話"},
+        }
+        next_data = json.dumps(
+            {"props": {"pageProps": {"__APOLLO_STATE__": state}}},
+            ensure_ascii=False,
+        )
+        work_html = f'<script id="__NEXT_DATA__" type="application/json">{next_data}</script>'
+        episode_html = """
+        <p class="widget-episodeTitle">第1話 公開話</p>
+        <div class="widget-episodeBody js-episode-body">
+          <p id="p1">公開本文。</p>
+        </div>
+        """
+
+        class FakeHeaders:
+            def get_content_charset(self):
+                return "utf-8"
+
+        class FakeResponse:
+            headers = FakeHeaders()
+
+            def __init__(self, text: str) -> None:
+                self.text = text
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return self.text.encode("utf-8")
+
+        def fake_urlopen(request, timeout=30):
+            return FakeResponse(episode_html if request.full_url == episode_url else work_html)
+
+        original = kakuyomu.urllib.request.urlopen
+        kakuyomu.urllib.request.urlopen = fake_urlopen  # type: ignore[assignment]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = StringIO()
+                with redirect_stdout(output):
+                    code = main(
+                        [
+                            "run-url",
+                            "--name",
+                            "kakuyomu_public",
+                            "--url",
+                            work_url,
+                            "--base-dir",
+                            str(root / "projects"),
+                            "--episodes",
+                            "1",
+                            "--dry-run",
+                            "--allow-auto-fetch",
+                            "--permission-note",
+                            "authorized personal use",
+                            "--confirm-rights",
+                            "--no-redistribute",
+                            "--formats",
+                            "txt",
+                        ]
+                    )
+                self.assertEqual(code, 0)
+                project_root = Path([line for line in output.getvalue().splitlines() if line.strip()][0])
+                self.assertTrue((project_root / "source" / "episode_001.json").exists())
+                self.assertTrue((project_root / "translated" / "episode_001.ko.md").exists())
+                self.assertTrue((project_root / "exports" / "kakuyomu_public.txt").exists())
+        finally:
+            kakuyomu.urllib.request.urlopen = original  # type: ignore[assignment]
+
     def test_run_url_command_can_select_original_episode_number_from_user_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

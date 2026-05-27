@@ -9,7 +9,7 @@
 - Textual full-screen UI available with the same dark command-palette visual language via `noveltrans --textual`
 - Local TXT/HTML/ZIP input, clipboard/manual paste, and `$EDITOR` source editing workflows
 - Safety confirmations before project creation
-- Site policy gate for Aozora, Syosetu metadata, Kakuyomu, Hameln, pixiv, and local files
+- Site policy gate for Aozora, Kakuyomu public pages, Syosetu metadata, Hameln, pixiv, and local files
 - Episode-level async translation queue with resume support
 - OpenAI Responses API translator using `gpt-5.5` by default
 - Codex CLI translator backend using `codex login` credentials without reading API keys
@@ -67,11 +67,19 @@ noveltrans auth codex-status
 noveltrans run-local --name demo --input sample.txt --backend codex --confirm-rights --no-redistribute --formats txt,docx,epub
 ```
 
-For a restricted URL with user-provided source text:
+For a Kakuyomu public work or episode URL:
 
 ```bash
-noveltrans run-url --name demo --url https://kakuyomu.jp/works/abc --fallback-file saved.txt --episodes 1-3 --dry-run --confirm-rights --no-redistribute
+noveltrans run-url --name kakuyomu_demo --url https://kakuyomu.jp/works/111 --episodes 1-3 --dry-run --allow-auto-fetch --permission-note "authorized personal use" --confirm-rights --no-redistribute
 ```
+
+For a URL that should use user-provided source text instead of automatic body fetch:
+
+```bash
+noveltrans run-url --name demo --url https://syosetu.org/novel/123/ --fallback-file saved.txt --episodes 1-3 --dry-run --confirm-rights --no-redistribute
+```
+
+Syosetu URLs are supported through the official developer API for metadata. Body text still needs a user-provided file because the current Syosetu terms restrict automated non-API access and body collection.
 
 To append newly saved episodes to an existing project and translate only the added or pending items:
 
@@ -183,6 +191,8 @@ New projects store their manifest as `project.json`. Existing `project.yaml` man
 ## Safety Policy
 
 This tool does not support copyright infringement, paid-content bypass, login session theft, CAPTCHA bypass, or automated collection that violates a site policy. Sites without a safe automated access path are blocked from automatic body fetch and only accept user-provided source files.
+
+Kakuyomu support is limited to public guest pages, requires explicit rights confirmation, and does not use cookies, login sessions, paid/locked episodes, or bypass mechanisms. Syosetu support remains metadata-only plus user-provided body text.
 
 Local credential fallback uses a per-user best-effort encrypted file with restrictive file permissions when OS keyring support is unavailable. Prefer system keychains for production use.
 

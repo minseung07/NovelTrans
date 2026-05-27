@@ -78,24 +78,7 @@ def create_project_from_url(
     policy = engine.effective_policy(connector.get_policy())
     work = connector.get_work_metadata(url)
     episodes: list[EpisodeText] = []
-    if policy.auto_fetch_allowed:
-        engine.assert_can_auto_fetch(
-            policy,
-            user_permission=user_permission,
-            permission_evidence=permission_evidence,
-        )
-        work = _work_with_permission_evidence(work, permission_evidence)
-        metadata = connector.list_episodes(url)
-        selected = set(parse_episode_range(episode_spec, [item.episode_no for item in metadata]))
-        episodes = _fetch_selected_episodes(
-            connector=connector,
-            metadata=metadata,
-            selected=selected,
-            translation=translation,
-            max_rps=policy.max_rps,
-        )
-        _assert_translatable_episodes(episodes, url)
-    elif fallback_file:
+    if fallback_file:
         episodes = _load_user_file_episodes(
             fallback_file,
             translation,
@@ -113,6 +96,23 @@ def create_project_from_url(
             collected_at=work.collected_at,
             extra=_extra_with_permission_evidence(work.extra, permission_evidence),
         )
+    elif policy.auto_fetch_allowed:
+        engine.assert_can_auto_fetch(
+            policy,
+            user_permission=user_permission,
+            permission_evidence=permission_evidence,
+        )
+        work = _work_with_permission_evidence(work, permission_evidence)
+        metadata = connector.list_episodes(url)
+        selected = set(parse_episode_range(episode_spec, [item.episode_no for item in metadata]))
+        episodes = _fetch_selected_episodes(
+            connector=connector,
+            metadata=metadata,
+            selected=selected,
+            translation=translation,
+            max_rps=policy.max_rps,
+        )
+        _assert_translatable_episodes(episodes, url)
     else:
         raise PolicyViolation(
             f"{policy.site_name}는 자동 본문 수집이 비활성화되어 있습니다. 사용자 제공 파일이 필요합니다."

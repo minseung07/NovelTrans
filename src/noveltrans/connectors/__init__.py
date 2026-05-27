@@ -9,8 +9,9 @@ from noveltrans.errors import ConnectorNotFound
 
 from .aozora import AozoraConnector
 from .base import NovelConnector
+from .kakuyomu import KakuyomuConnector
 from .local_file import LocalFileConnector
-from .restricted import HamelnConnector, KakuyomuConnector, PixivConnector
+from .restricted import HamelnConnector, PixivConnector
 from .syosetu import SyosetuConnector
 
 

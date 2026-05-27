@@ -55,14 +55,6 @@ class _RestrictedConnector(NovelConnector):
         raise PolicyViolation(f"{self.site_name} 본문 자동 수집은 지원하지 않습니다.")
 
 
-class KakuyomuConnector(_RestrictedConnector):
-    site_name = "カクヨム"
-    site_key = "kakuyomu"
-    grade = "C"
-    host_fragments = ("kakuyomu.jp",)
-    notes = "URL 분석과 사용자 제공 텍스트 처리만 지원합니다."
-
-
 class HamelnConnector(_RestrictedConnector):
     site_name = "ハーメルン"
     site_key = "hameln"

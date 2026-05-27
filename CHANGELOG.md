@@ -2,6 +2,17 @@
 
 All notable changes to NovelTrans CLI will be documented in this file.
 
+## [1.0.3] - 2026-05-27
+
+### Added
+
+- Kakuyomu public-page connector for authorized personal-use workflows, including work metadata, episode listing, and public episode body extraction.
+
+### Changed
+
+- URL workflows now prefer an explicit user-provided fallback file over automatic fetch when both are available.
+- README site-policy notes now distinguish Kakuyomu public-page support from Syosetu metadata-only support.
+
 ## [1.0.1] - 2026-05-27
 
 ### Changed

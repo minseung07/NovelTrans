@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -115,13 +116,99 @@ class ConnectorPolicyPreprocessingTests(unittest.TestCase):
         self.assertNotIn("わがはい", text)
 
     def test_restricted_connector_blocks_body_fetch(self) -> None:
-        connector = detect_connector("https://kakuyomu.jp/works/abc")
+        connector = detect_connector("https://syosetu.org/novel/123/")
         policy = connector.get_policy()
         self.assertFalse(policy.auto_fetch_allowed)
         with self.assertRaises(PolicyViolation):
             PolicyEngine().assert_can_auto_fetch(policy, user_permission=True)
         with self.assertRaises(PolicyViolation):
-            connector.fetch_episode(connector.list_episodes("https://kakuyomu.jp/works/abc")[0])
+            connector.fetch_episode(connector.list_episodes("https://syosetu.org/novel/123/")[0])
+
+    def test_kakuyomu_connector_lists_and_fetches_public_pages(self) -> None:
+        import noveltrans.connectors.kakuyomu as kakuyomu
+
+        work_url = "https://kakuyomu.jp/works/111"
+        episode_url = "https://kakuyomu.jp/works/111/episodes/222"
+        state = {
+            "Work:111": {
+                "__typename": "Work",
+                "id": "111",
+                "title": "作品名",
+                "author": {"__ref": "UserAccount:7"},
+                "publicEpisodeCount": 1,
+                "serialStatus": "RUNNING",
+                "tableOfContentsV2": [{"__ref": "TableOfContentsChapter:"}],
+            },
+            "UserAccount:7": {"__typename": "UserAccount", "activityName": "作者名"},
+            "TableOfContentsChapter:": {
+                "__typename": "TableOfContentsChapter",
+                "episodeUnions": [{"__ref": "Episode:222"}],
+            },
+            "Episode:222": {"__typename": "Episode", "id": "222", "title": "第1話 始まり"},
+        }
+        next_data = json.dumps(
+            {"props": {"pageProps": {"__APOLLO_STATE__": state}}},
+            ensure_ascii=False,
+        )
+        work_html = f'<html><script id="__NEXT_DATA__" type="application/json">{next_data}</script></html>'
+        episode_html = """
+        <html><body>
+          <p class="widget-episodeTitle">第1話 始まり</p>
+          <div class="widget-episodeBody js-episode-body">
+            <p id="p1">本文一。</p>
+            <p id="p2"><ruby>魔法<rt>まほう</rt></ruby>だ。</p>
+          </div>
+        </body></html>
+        """
+
+        class FakeHeaders:
+            def get_content_charset(self):
+                return "utf-8"
+
+        class FakeResponse:
+            headers = FakeHeaders()
+
+            def __init__(self, text: str) -> None:
+                self.text = text
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return self.text.encode("utf-8")
+
+        def fake_urlopen(request, timeout=30):
+            url = request.full_url
+            return FakeResponse(episode_html if url == episode_url else work_html)
+
+        original = kakuyomu.urllib.request.urlopen
+        kakuyomu.urllib.request.urlopen = fake_urlopen  # type: ignore[assignment]
+        try:
+            connector = detect_connector(work_url)
+            policy = connector.get_policy()
+            self.assertTrue(policy.auto_fetch_allowed)
+            with self.assertRaises(PolicyViolation):
+                PolicyEngine().assert_can_auto_fetch(policy, user_permission=True)
+            PolicyEngine().assert_can_auto_fetch(
+                policy,
+                user_permission=True,
+                permission_evidence="authorized personal use",
+            )
+            work = connector.get_work_metadata(work_url)
+            self.assertEqual(work.title, "作品名")
+            self.assertEqual(work.author, "作者名")
+            metadata = connector.list_episodes(work_url)
+            self.assertEqual(metadata[0].title, "第1話 始まり")
+            fetched = connector.fetch_episode(metadata[0])
+            self.assertEqual(fetched.episode_no, 1)
+            self.assertIn("本文一。", fetched.all_text())
+            self.assertIn("魔法だ。", fetched.all_text())
+            self.assertNotIn("まほう", fetched.all_text())
+        finally:
+            kakuyomu.urllib.request.urlopen = original  # type: ignore[assignment]
 
     def test_policy_engine_requires_evidence_for_b_grade_auto_fetch(self) -> None:
         policy = ConnectorPolicy(
