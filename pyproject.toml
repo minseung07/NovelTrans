@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "noveltrans"
-version = "1.0.7"
+version = "1.0.8"
 description = "Interactive terminal workflow for authorized Japanese web novel translation."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "NovelTrans Maintainers" }]
 dependencies = []

@@ -2,6 +2,12 @@
 
 All notable changes to NovelTrans CLI will be documented in this file.
 
+## [1.0.8] - 2026-05-27
+
+### Fixed
+
+- Changed the package license metadata to the setuptools-compatible `license = "MIT"` format so frozen `uv sync` builds no longer fail while validating `project.license`.
+
 ## [1.0.7] - 2026-05-27
 
 ### Changed
