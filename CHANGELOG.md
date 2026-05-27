@@ -2,6 +2,17 @@
 
 All notable changes to NovelTrans CLI will be documented in this file.
 
+## [1.0.7] - 2026-05-27
+
+### Changed
+
+- Rewrote the README in Korean with a task-oriented structure covering installation, wizard usage, CLI examples, authentication, site policy, project layout, development, plugins, and license information.
+- Clarified that Settings and new-project flows share the same controls for source input, speed, translation mode, output, and review settings.
+
+### Added
+
+- Added the MIT license file and package license-file metadata.
+
 ## [1.0.6] - 2026-05-27
 
 ### Changed
