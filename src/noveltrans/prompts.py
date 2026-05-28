@@ -5,12 +5,17 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-from .glossary import is_pending_auto_seed
+from .glossary import is_confirmed_entry, is_pending_entry, normalize_status
 from .models import EpisodeText, GlossaryEntry, TranslationOptions
 
 
 SYSTEM_PROMPT = """너는 일본 웹소설을 한국어 웹소설 문체로 번역하는 전문 번역가다.
-고유명사와 설정 용어는 제공된 용어집을 우선한다.
+고유명사와 설정 용어는 제공된 프로젝트 용어집을 우선한다.
+locked_glossary의 target은 반드시 그대로 사용한다.
+accepted_glossary는 기본적으로 그대로 사용하고, forbidden_targets에 있는 번역어는 쓰지 않는다.
+candidate_terms는 확정 용어가 아니다. 필요하면 new_terms에 proposal만 반환한다.
+source가 입력 원문에 실제 존재하지 않는 용어는 new_terms에 넣지 않는다.
+기존 accepted/locked target과 다르게 번역했다면 term_conflicts에 보고한다.
 원문 문단 순서를 유지하고, 누락, 요약, 검열을 하지 않는다.
 의성어와 의태어는 한국어 독자가 자연스럽게 읽을 수 있게 조정한다.
 작가 후기는 본문과 구분해 번역한다.
@@ -41,13 +46,25 @@ TRANSLATION_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["source", "target", "type", "confidence", "reason"],
+                "required": [
+                    "source",
+                    "target",
+                    "type",
+                    "confidence",
+                    "reason",
+                    "evidence_quote",
+                    "alternative_targets",
+                    "used_in_translation",
+                ],
                 "properties": {
                     "source": {"type": "string"},
                     "target": {"type": "string"},
                     "type": {"type": "string"},
                     "confidence": {"type": "number"},
                     "reason": {"type": "string"},
+                    "evidence_quote": {"type": "string"},
+                    "alternative_targets": {"type": "array", "items": {"type": "string"}},
+                    "used_in_translation": {"type": "boolean"},
                 },
             },
         },
@@ -86,7 +103,14 @@ def build_episode_payload(
         "preserve_japanese_suffixes": options.preserve_japanese_suffixes,
         "translate_author_notes": options.translate_author_notes,
         "glossary_strictness": options.glossary_strictness,
-        "glossary": [_glossary_payload(entry) for entry in glossary],
+        "glossary_updates": options.glossary_updates,
+        "locked_glossary": [_glossary_payload(entry) for entry in glossary if normalize_status(entry.status) == "locked"],
+        "accepted_glossary": [
+            _glossary_payload(entry)
+            for entry in glossary
+            if is_confirmed_entry(entry) and normalize_status(entry.status) != "locked"
+        ],
+        "candidate_terms": [_candidate_payload(entry) for entry in glossary if is_pending_entry(entry)],
         "previous_summary": previous_summary,
         "sections": [asdict(section) for section in episode.sections],
     }
@@ -95,7 +119,12 @@ def build_episode_payload(
 
 def _glossary_payload(entry: GlossaryEntry) -> dict[str, object]:
     payload = asdict(entry)
-    if is_pending_auto_seed(entry):
-        payload["target"] = ""
-        payload["notes"] = f"{entry.notes}; target pending, propose a natural Korean translation"
+    return payload
+
+
+def _candidate_payload(entry: GlossaryEntry) -> dict[str, object]:
+    payload = asdict(entry)
+    payload["target"] = ""
+    payload["status"] = normalize_status(entry.status)
+    payload["notes"] = f"{entry.notes}; candidate only, return a proposal if this term is used"
     return payload

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .glossary import is_pending_auto_seed
+from .glossary import entry_applies_to_episode, is_confirmed_entry, normalize_status, source_terms
 from .models import EpisodeText, GlossaryEntry, QAIssue, TranslationResult
 from .utils import paragraph_count
 
@@ -41,6 +41,7 @@ class QAEngine:
         check_missing_paragraphs: bool = True,
         compare_length_ratio: bool = True,
         check_term_consistency: bool = True,
+        glossary_strictness: str = "high",
     ) -> list[QAIssue]:
         issues: list[QAIssue] = []
         translated = "\n\n".join(
@@ -99,16 +100,58 @@ class QAEngine:
 
         if check_term_consistency:
             for entry in glossary:
-                if is_pending_auto_seed(entry):
+                if (
+                    not is_confirmed_entry(entry)
+                    or not entry_applies_to_episode(entry, source.episode_no)
+                    or not _should_check_entry_for_strictness(entry, glossary_strictness)
+                ):
                     continue
-                if entry.source in source_text and entry.target and entry.target not in translated:
+                matched_sources = [term for term in source_terms(entry) if term in source_text]
+                if not matched_sources:
+                    continue
+                if entry.target and not _target_matches(translated, entry):
+                    code = (
+                        "glossary_locked_target_changed"
+                        if entry.locked or normalize_status(entry.status) == "locked"
+                        else "glossary_context_mismatch"
+                        if entry.matching_policy == "contextual"
+                        else "glossary_target_missing"
+                    )
+                    issues.append(
+                        QAIssue(
+                            episode_no=source.episode_no,
+                            severity=(
+                                "warning"
+                                if code == "glossary_locked_target_changed" and glossary_strictness == "strict"
+                                else "info"
+                            ),
+                            code=code,
+                            message=f"용어집 권장 번역이 보이지 않습니다: {entry.source} -> {entry.target}",
+                            auto_fixable=False,
+                        )
+                    )
+                if entry.aliases and any(alias in matched_sources for alias in entry.aliases):
                     issues.append(
                         QAIssue(
                             episode_no=source.episode_no,
                             severity="info",
-                            code="glossary_target_missing",
-                            message=f"용어집 권장 번역이 보이지 않습니다: {entry.source} -> {entry.target}",
+                            code="glossary_alias_used",
+                            message=f"용어 별칭이 원문에 사용되었습니다: {entry.source}",
                             auto_fixable=False,
+                        )
+                    )
+                forbidden_matches = [target for target in entry.forbidden_targets if target and target in translated]
+                if forbidden_matches:
+                    issues.append(
+                        QAIssue(
+                            episode_no=source.episode_no,
+                            severity="warning",
+                            code="glossary_forbidden_target_used",
+                            message=(
+                                f"금지된 용어 번역이 보입니다: {entry.source} -> "
+                                + ", ".join(forbidden_matches[:6])
+                            ),
+                            auto_fixable=True,
                         )
                     )
                 variant_matches = _target_variant_matches(translated, entry.target)
@@ -117,7 +160,7 @@ class QAEngine:
                         QAIssue(
                             episode_no=source.episode_no,
                             severity="info",
-                            code="name_variant",
+                            code="glossary_variant_suspected",
                             message=(
                                 f"용어 표기 흔들림 후보: {entry.source} -> "
                                 + ", ".join(variant_matches[:6])
@@ -159,6 +202,28 @@ def _target_variant_matches(translated: str, target: str) -> list[str]:
         if candidate and candidate in translated:
             matches.append(candidate)
     return matches
+
+
+def _should_check_entry_for_strictness(entry: GlossaryEntry, strictness: str) -> bool:
+    normalized = (strictness or "high").strip().lower()
+    if normalized == "low":
+        return False
+    if normalized == "medium":
+        return bool(entry.locked or normalize_status(entry.status) == "locked")
+    return True
+
+
+def _target_matches(translated: str, entry: GlossaryEntry) -> bool:
+    target = entry.target.strip()
+    if not target:
+        return False
+    if target in translated:
+        return True
+    if entry.matching_policy in {"spacing_flexible", "suffix_allowed", "contextual"}:
+        return target.replace(" ", "") in translated.replace(" ", "")
+    if entry.matching_policy == "alias_allowed":
+        return any(alias and alias in translated for alias in entry.aliases)
+    return False
 
 
 def _spacing_variants(target: str) -> list[str]:

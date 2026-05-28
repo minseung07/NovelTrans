@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from .errors import TranslationError
-from .models import EpisodeText, GlossaryEntry, TermConflict, TranslationOptions, TranslationResult
+from .models import EpisodeText, GlossaryEntry, GlossaryProposal, TermConflict, TranslationOptions, TranslationResult
 from .prompts import SYSTEM_PROMPT, TRANSLATION_SCHEMA, build_episode_payload
 
 
@@ -306,12 +306,16 @@ def result_from_payload(payload: dict[str, Any], raw_response: dict[str, Any] | 
     if not isinstance(new_term_payload, list) or not isinstance(conflict_payload, list):
         raise TranslationError("OpenAI response JSON had invalid term arrays")
     new_terms = [
-        GlossaryEntry(
+        GlossaryProposal(
             source=str(item.get("source", "")),
             target=str(item.get("target", "")),
-            type=str(item.get("type", "proper_noun")),
+            type=str(item.get("type", "unknown")),
             confidence=_confidence(item.get("confidence", 0.5)),
-            notes=str(item.get("reason", "")),
+            reason=str(item.get("reason", "")),
+            evidence_quote=str(item.get("evidence_quote", "")),
+            alternative_targets=_string_list(item.get("alternative_targets", [])),
+            used_in_translation=bool(item.get("used_in_translation", False)),
+            proposer=str(item.get("proposer", "model")),
         )
         for item in new_term_payload
         if isinstance(item, dict)
@@ -437,6 +441,10 @@ def _string_value(value: Any) -> str:
 
 def _list_value(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _string_list(value: Any) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []
 
 
 def _dry_run_text(text: str) -> str:

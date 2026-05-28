@@ -22,6 +22,7 @@ from .utils import atomic_write_json, ensure_dir, now_iso, read_json, slugify, u
 
 CANONICAL_MANIFEST_NAME = "project.json"
 LEGACY_MANIFEST_NAME = "project.yaml"
+REMOVED_MANIFEST_EXPORT_FORMATS = {"docx"}
 
 
 class Project:
@@ -188,6 +189,7 @@ def manifest_from_dict(data: dict[str, Any]) -> ProjectManifest:
     parallel = ParallelOptions(**_filter_dataclass_fields(ParallelOptions, data["parallel"]))
     quality = QualityOptions(**_filter_dataclass_fields(QualityOptions, data["quality"]))
     export = ExportOptions(**_filter_dataclass_fields(ExportOptions, data["export"]))
+    export.formats = _normalize_legacy_export_formats(export.formats)
     source_policy = None
     if data.get("source_policy"):
         source_policy = ConnectorPolicy(**_filter_dataclass_fields(ConnectorPolicy, data["source_policy"]))
@@ -203,6 +205,16 @@ def manifest_from_dict(data: dict[str, Any]) -> ProjectManifest:
         updated_at=data["updated_at"],
         source_policy=source_policy,
     )
+
+
+def _normalize_legacy_export_formats(formats: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for item in formats:
+        value = str(item).strip().lower()
+        if not value or value in REMOVED_MANIFEST_EXPORT_FORMATS:
+            continue
+        normalized.append(value)
+    return normalized or ["txt", "epub"]
 
 
 def episode_from_dict(data: dict[str, Any]) -> EpisodeText:

@@ -6,9 +6,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from threading import Lock
 
-from .glossary import GlossaryManager, is_pending_auto_seed
+from .glossary import GlossaryManager, entry_applies_to_episode, is_confirmed_entry, source_terms
 from .errors import TranslationError
-from .models import EpisodeText, ParallelOptions, QAIssue, QualityOptions, Section, TranslationOptions, TranslationResult
+from .models import (
+    EpisodeText,
+    GlossaryEntry,
+    ParallelOptions,
+    QAIssue,
+    QualityOptions,
+    Section,
+    TranslationOptions,
+    TranslationResult,
+)
 from .project import Project
 from .qa import QAEngine
 from .translator import Translator
@@ -85,7 +94,12 @@ class TranslationOrchestrator:
                 with self._db_lock:
                     self.project.db.update_job(job_id, "running", retry_count=attempt)
                 result = self._translate_episode(episode)
-                conflicts = self.glossary.update_from_terms(result.new_terms)
+                conflicts = self.glossary.update_from_terms(
+                    result.new_terms,
+                    episode=episode,
+                    strictness=self.translation_options.glossary_strictness,
+                    update_mode=self.translation_options.glossary_updates,
+                )
                 result.term_conflicts.extend(conflicts)
                 self._sync_glossary_to_db()
                 issues = self._run_qa(episode, result)
@@ -119,7 +133,7 @@ class TranslationOrchestrator:
             result = self.translator.translate_episode(
                 episode,
                 self.translation_options,
-                self.glossary.snapshot(),
+                self._glossary_for_episode(episode.episode_no),
                 self._episode_context_summary(),
             )
             return self._normalize_translation_result(result)
@@ -131,7 +145,7 @@ class TranslationOrchestrator:
             result = self.translator.translate_episode(
                 chunk,
                 self.translation_options,
-                self.glossary.snapshot(),
+                self._glossary_for_episode(chunk.episode_no),
                 rolling_summary,
             )
             result = self._normalize_translation_result(result)
@@ -193,7 +207,33 @@ class TranslationOrchestrator:
                     entry.type,
                     entry.confidence,
                     entry.locked,
+                    reading=entry.reading,
+                    status=entry.status,
+                    aliases=entry.aliases,
+                    forbidden_targets=entry.forbidden_targets,
+                    notes=entry.notes,
+                    first_seen_episode=entry.first_seen_episode,
+                    source_score=entry.source_score,
+                    target_score=entry.target_score,
+                    occurrence_count=entry.occurrence_count,
+                    episode_count=entry.episode_count,
+                    last_seen_episode=entry.last_seen_episode,
+                    origin=entry.origin,
+                    priority=entry.priority,
+                    variants=entry.variants,
+                    evidence=[asdict(item) for item in entry.evidence],
+                    matching_policy=entry.matching_policy,
+                    episode_start=entry.episode_start,
+                    episode_end=entry.episode_end,
+                    speaker=entry.speaker,
                 )
+
+    def _glossary_for_episode(self, episode_no: int) -> list[GlossaryEntry]:
+        return [
+            entry
+            for entry in self.glossary.snapshot()
+            if entry_applies_to_episode(entry, episode_no)
+        ]
 
     def _run_qa(self, episode: EpisodeText, result: TranslationResult) -> list[QAIssue]:
         if not self.quality_options.run_qa_pass:
@@ -206,6 +246,7 @@ class TranslationOrchestrator:
             check_missing_paragraphs=self.quality_options.check_missing_paragraphs,
             compare_length_ratio=self.quality_options.compare_length_ratio,
             check_term_consistency=self.quality_options.run_term_consistency_pass,
+            glossary_strictness=self.translation_options.glossary_strictness,
         )
 
     def _save_translation(self, episode: EpisodeText, result: TranslationResult, issues: list[QAIssue]) -> None:
@@ -262,6 +303,7 @@ class TranslationOrchestrator:
                 "episode_reports": reports,
                 "total_issues": total_issues,
                 "total_term_conflicts": total_conflicts,
+                "unresolved_term_conflicts": [asdict(conflict) for conflict in self.glossary.conflict_snapshot(limit=10_000)],
                 "global_term_issues": self._global_term_issues(),
                 "status_counts": self.project.db.counts_by_status(),
             },
@@ -282,6 +324,7 @@ class TranslationOrchestrator:
             f"status_counts: {status_counts}",
             f"total_issues: {total_issues}",
             f"total_term_conflicts: {total_conflicts}",
+            f"unresolved_term_conflicts: {len(self.glossary.conflict_snapshot(limit=10_000))}",
             f"global_term_issues: {len(global_term_issues)}",
             "",
         ]
@@ -312,16 +355,27 @@ class TranslationOrchestrator:
                     f"- episode {issue.get('episode_no', '?')}: "
                     f"{issue.get('source', '')} -> {issue.get('target', '')}"
                 )
+        unresolved_conflicts = self.glossary.conflict_snapshot(limit=10_000)
+        if unresolved_conflicts:
+            if global_term_issues:
+                lines.append("")
+            lines.append("Unresolved Term Conflicts")
+            for conflict in unresolved_conflicts:
+                lines.append(
+                    f"- {conflict.source}: {conflict.previous or '(none)'} -> "
+                    f"{conflict.suggested or '(none)'} ({conflict.recommendation})"
+                )
         atomic_write_text(self.project.logs_dir / "quality_report.txt", "\n".join(lines).rstrip() + "\n")
 
     def _global_term_issues(self) -> list[dict[str, object]]:
-        if not self.quality_options.run_term_consistency_pass:
+        if not self.quality_options.run_term_consistency_pass or self.translation_options.glossary_strictness == "low":
             return []
+        locked_only = self.translation_options.glossary_strictness == "medium"
         issues: list[dict[str, object]] = []
         glossary = [
             entry
             for entry in self.glossary.snapshot(limit=10_000)
-            if entry.source and entry.target and not is_pending_auto_seed(entry)
+            if is_confirmed_entry(entry) and (not locked_only or entry.locked)
         ]
         for source_episode in self.project.list_source_episodes():
             translated_path = self.project.translation_path(source_episode.episode_no)
@@ -330,7 +384,11 @@ class TranslationOrchestrator:
             translated = translated_path.read_text(encoding="utf-8")
             source_text = source_episode.all_text()
             for entry in glossary:
-                if entry.source in source_text and entry.target not in translated:
+                if (
+                    entry_applies_to_episode(entry, source_episode.episode_no)
+                    and any(source in source_text for source in source_terms(entry))
+                    and not _target_visible(translated, entry)
+                ):
                     issues.append(
                         {
                             "episode_no": source_episode.episode_no,
@@ -372,6 +430,18 @@ def _split_episode_for_translation(episode: EpisodeText, threshold_chars: int) -
         )
         for index, sections in enumerate(chunks, start=1)
     ]
+
+
+def _target_visible(translated: str, entry: GlossaryEntry) -> bool:
+    if not entry.target:
+        return False
+    if entry.target in translated:
+        return True
+    if entry.matching_policy in {"spacing_flexible", "suffix_allowed", "contextual"}:
+        return entry.target.replace(" ", "") in translated.replace(" ", "")
+    if entry.matching_policy == "alias_allowed":
+        return any(alias and alias in translated for alias in entry.aliases)
+    return False
 
 
 def _split_section_paragraphs(text: str) -> list[str]:

@@ -2,6 +2,40 @@
 
 All notable changes to NovelTrans CLI will be documented in this file.
 
+## [1.0.9] - 2026-05-28
+
+### Added
+
+- Added glossary v2 candidate/proposal/decision flow so model-suggested terms are validated before any project glossary update is applied.
+- Added safe glossary update policy controls through `--glossary-updates`, project translation options, and the terminal wizard.
+- Added source-evidence based candidate mining with Japanese/webnovel stoplists packaged under `noveltrans.data`.
+- Added explicit glossary entry status handling (`pending`, `approved`, `locked`, `conflict`, `rejected`, `deprecated`) with alias and forbidden-target metadata.
+- Added glossary pending-review, unlock, reject, conflict review, strictness, and update-mode actions to the terminal wizard.
+- Added glossary CLI commands for listing, review, locking, forbidding targets, and resolving user-approved targets.
+- Added glossary v2 SQLite fields plus occurrence and merge-decision audit tables.
+- Added unresolved glossary conflict sections to TXT/EPUB glossary exports and quality reports.
+- Added `docs/glossary.md` to document glossary lifecycle, prompt rules, QA behavior, conflict handling, and export policy.
+
+### Removed
+
+- Finalized DOCX removal from supported export formats. Explicit CLI/library requests for `docx` now fail with a clear message instead of being silently ignored.
+
+### Changed
+
+- Clarified README output-format guidance around the supported `TXT` and `EPUB` formats.
+- Legacy project manifests that still contain `docx` are normalized to the remaining supported formats when loaded.
+- Glossary QA now understands aliases and reports forbidden glossary targets.
+- Translation prompts now split glossary context into locked, accepted, and candidate groups.
+- Model `new_terms` are parsed as glossary proposals, not directly trusted entries.
+- Model-proposed glossary targets no longer silently overwrite approved terms; disagreements become reviewable conflicts.
+- Glossary strictness now controls QA scope, locked-term warning severity, and automatic update behavior.
+- Global term consistency reports now respect glossary matching policies such as spacing-flexible and alias-aware matching.
+
+### Fixed
+
+- Prevented targetless candidate terms from being locked through CLI or wizard flows.
+- Fixed mismatch where CLI/TUI showed unresolved glossary conflicts but TXT/EPUB glossary appendices hid them.
+
 ## [1.0.8] - 2026-05-27
 
 ### Fixed
@@ -91,7 +125,7 @@ All notable changes to NovelTrans CLI will be documented in this file.
 - Translation backends for OpenAI Responses API, Codex CLI, and offline dry-run validation.
 - Glossary seeding, update, conflict tracking, locking, and SQLite synchronization.
 - QA checks for missing paragraphs, length ratio, Japanese leftovers, numbers, glossary consistency, name variants, speech-style mixing, and banned terms.
-- TXT, DOCX, and EPUB exporters implemented with the Python standard library.
+- TXT and EPUB exporters implemented with the Python standard library.
 - Verification, status, estimate, report, policy import/refresh/show, and credential management CLI commands.
 - Connector plugin entry point support under `noveltrans.connectors`.
 - CI workflow and test suite covering connectors, policies, preprocessing, workflow resume, exporters, credentials, and translator parsing.

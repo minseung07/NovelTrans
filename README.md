@@ -16,7 +16,7 @@ NovelTrans는 저작권 침해, 유료 콘텐츠 우회, 로그인 세션 탈취
 - 사이트 정책 게이트와 권한 확인 흐름
 - 에피소드 단위 비동기 번역 큐, 실패 재시도, 이어 번역
 - OpenAI Responses API, Codex CLI, dry-run 번역 백엔드
-- 용어집 자동 후보 추출, 업데이트, 충돌 추적, 잠금
+- 용어집 자동 후보 추출, 대기 후보 검토, 별칭/금칙 번역어, 충돌 추적, 잠금
 - 누락 문단, 길이 비율, 일본어 잔존, 숫자, 용어 일관성, 이름 흔들림, 금칙어 QA
 - `TXT`와 개선된 `EPUB` 내보내기
 - SQLite 프로젝트 DB와 파일 기반 프로젝트 구조
@@ -82,6 +82,10 @@ noveltrans
 
 설정 화면과 새 작업 화면은 같은 선택 도구를 사용합니다. 예를 들어 속도는 항상 `차분하게 1화씩`, `보통 2화씩`, `빠르게 4화씩`, `최대 8화씩` 중에서 고릅니다. 번역 모드를 바꾸면 실제 문체, temperature, 용어집 엄격도, 추론 강도 기본값도 함께 갱신됩니다.
 
+## 출력 형식
+
+현재 공식 지원 출력 형식은 `TXT`와 `EPUB`입니다. `DOCX` 출력은 v1 범위에서 제거되었습니다. 오래된 설정이나 프로젝트 manifest에 남아 있는 `docx` 값은 `txt`/`epub` 기준으로 정리되며, CLI에서 `--formats docx`처럼 명시적으로 요청하면 오류로 안내합니다.
+
 ## 빠른 사용 예시
 
 로컬 파일로 dry-run을 실행합니다.
@@ -105,6 +109,8 @@ noveltrans run-local \
   --name demo \
   --input sample.txt \
   --backend codex \
+  --glossary-updates safe \
+  --glossary-strictness high \
   --confirm-rights \
   --no-redistribute \
   --formats txt,epub
@@ -224,6 +230,10 @@ noveltrans doctor --strict
 ## 플러그인
 
 서드파티 커넥터는 `noveltrans.connectors` entry point group으로 로드됩니다. 자세한 내용은 [docs/plugin_sdk.md](docs/plugin_sdk.md)와 [examples/connectors/example_connector.py](examples/connectors/example_connector.py)를 참고하세요.
+
+## 용어집 정책
+
+용어집은 장편 번역의 이름/지명/스킬/설정 일관성을 관리하는 프로젝트별 지식베이스입니다. 자동 추출 용어는 먼저 evidence가 붙은 `candidate`로 저장되고, 모델 응답은 `GlossaryProposal`로 검증된 뒤 safe merge만 `accepted_auto`로 반영됩니다. 기존 target 교체, `accepted_user`, `locked` 변경은 자동 처리하지 않고 conflict/review로 남깁니다. 상태값, proposal audit, 금칙 번역어, QA 규칙은 [docs/glossary.md](docs/glossary.md)에 정리되어 있습니다.
 
 ## 라이선스
 

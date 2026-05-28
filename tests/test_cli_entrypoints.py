@@ -29,7 +29,7 @@ class CLIEntrypointTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         text = output.getvalue()
-        for command in ("run-local", "run-url", "add-source", "export", "status", "estimate", "report", "verify", "auth", "policy", "doctor"):
+        for command in ("run-local", "run-url", "add-source", "export", "status", "estimate", "report", "verify", "auth", "policy", "glossary", "doctor"):
             self.assertIn(command, text)
 
     def test_subcommand_help_shows_command_options(self) -> None:
@@ -45,6 +45,20 @@ class CLIEntrypointTests(unittest.TestCase):
         self.assertIn("--confirm-rights", text)
         self.assertIn("--no-redistribute", text)
         self.assertIn("--backend", text)
+        self.assertIn("--glossary-updates", text)
+
+    def test_glossary_subcommands_are_listed(self) -> None:
+        from noveltrans.cli import main
+
+        output = StringIO()
+        with redirect_stdout(output):
+            with self.assertRaises(SystemExit) as raised:
+                main(["glossary", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        text = output.getvalue()
+        for command in ("list", "review", "lock", "forbid", "resolve"):
+            self.assertIn(command, text)
 
     def test_wizard_back_key_is_user_facing_navigation(self) -> None:
         from noveltrans.wizard import BackRequested, Choice, TerminalPrompt
@@ -67,6 +81,7 @@ class CLIEntrypointTests(unittest.TestCase):
                 default_source_mode="file",
                 default_episode_spec="1-3",
                 default_translation_preset="literal",
+                default_glossary_updates="review",
                 default_output_formats=["txt"],
                 default_run_qa_pass=False,
                 watermark="wm",
@@ -77,6 +92,7 @@ class CLIEntrypointTests(unittest.TestCase):
         self.assertEqual(draft.translation.backend, "codex")
         self.assertEqual(draft.translation.preset, "literal")
         self.assertEqual(draft.translation.style, "literal_structure_preserving")
+        self.assertEqual(draft.translation.glossary_updates, "review")
         self.assertEqual(draft.translation.temperature, 0.2)
         self.assertEqual(draft.source_mode, "file")
         self.assertEqual(draft.episode_spec, "1-3")
@@ -199,17 +215,19 @@ class CLIEntrypointTests(unittest.TestCase):
 
         prompt = TerminalPrompt()
         prompt.interactive = False
-        config = AppConfig()
+        config = AppConfig(default_glossary_updates="unsafe")
         with tempfile.TemporaryDirectory() as tmp:
             with patch("builtins.input", side_effect=["3"]):
                 _edit_flat_setting(prompt, config, CredentialStore(Path(tmp)), "preset")
 
         self.assertEqual(config.default_translation_preset, "literary")
         self.assertEqual(config.default_style, "korean_webnovel_literary_naturalized")
+        self.assertEqual(config.default_glossary_updates, "safe")
         self.assertEqual(config.default_temperature, 0.45)
         draft = _new_project_draft_from_config(config)
         self.assertEqual(draft.translation.preset, "literary")
         self.assertEqual(draft.translation.style, "korean_webnovel_literary_naturalized")
+        self.assertEqual(draft.translation.glossary_updates, "safe")
         self.assertEqual(draft.translation.temperature, 0.45)
 
     def test_settings_speed_uses_same_choice_flow_as_new_project(self) -> None:

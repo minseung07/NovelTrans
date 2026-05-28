@@ -8,6 +8,61 @@ from typing import Any, Literal
 
 PolicyGrade = Literal["A", "B", "C", "D"]
 SectionType = Literal["foreword", "body", "afterword"]
+GlossaryStatus = Literal[
+    "candidate",
+    "proposed",
+    "accepted_auto",
+    "accepted_user",
+    "locked",
+    "forbidden",
+    "deprecated",
+    "needs_review",
+    "pending",
+    "approved",
+    "rejected",
+    "conflict",
+]
+GlossaryUpdateMode = Literal["off", "safe", "review", "unsafe"]
+GlossaryMatchingPolicy = Literal["exact", "spacing_flexible", "suffix_allowed", "alias_allowed", "contextual"]
+
+
+@dataclass(slots=True)
+class TermOccurrence:
+    episode_no: int
+    section_type: str
+    start: int
+    end: int
+    text: str
+    context_before: str = ""
+    context_after: str = ""
+
+
+@dataclass(slots=True)
+class GlossaryCandidate:
+    source: str
+    normalized_source: str
+    type_hint: str = "unknown"
+    occurrence_count: int = 0
+    episode_count: int = 0
+    first_seen_episode: int = 0
+    last_seen_episode: int = 0
+    title_hit: bool = False
+    source_score: float = 0.0
+    evidence: list[TermOccurrence] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class GlossaryProposal:
+    source: str
+    target: str
+    type: str = "unknown"
+    confidence: float = 0.5
+    reason: str = ""
+    evidence_quote: str = ""
+    alternative_targets: list[str] = field(default_factory=list)
+    used_in_translation: bool = False
+    proposer: str = "model"
 
 
 @dataclass(slots=True)
@@ -65,13 +120,29 @@ class EpisodeText:
 @dataclass(slots=True)
 class GlossaryEntry:
     source: str
-    target: str
-    type: str = "proper_noun"
+    target: str = ""
+    type: str = "unknown"
     reading: str = ""
-    confidence: float = 0.5
+    status: GlossaryStatus = "candidate"
+    confidence: float = 0.0
+    source_score: float = 0.0
+    target_score: float = 0.0
     locked: bool = False
+    priority: bool = False
+    aliases: list[str] = field(default_factory=list)
+    variants: list[str] = field(default_factory=list)
+    forbidden_targets: list[str] = field(default_factory=list)
+    occurrence_count: int = 0
+    episode_count: int = 0
     first_seen_episode: int = 0
+    last_seen_episode: int = 0
+    evidence: list[TermOccurrence] = field(default_factory=list)
+    origin: str = "auto"
     notes: str = ""
+    episode_start: int = 0
+    episode_end: int = 0
+    speaker: str = ""
+    matching_policy: GlossaryMatchingPolicy = "exact"
 
 
 @dataclass(slots=True)
@@ -80,6 +151,16 @@ class TermConflict:
     previous: str
     suggested: str
     recommendation: str = "keep_previous"
+    reason: str = ""
+
+
+@dataclass(slots=True)
+class MergeDecision:
+    action: str
+    safety: str
+    reason: str
+    entry: GlossaryEntry | None = None
+    conflict: TermConflict | None = None
 
 
 @dataclass(slots=True)
@@ -93,6 +174,7 @@ class TranslationOptions:
     translate_author_notes: bool = True
     keep_ruby_as_parentheses: bool = False
     glossary_strictness: str = "high"
+    glossary_updates: GlossaryUpdateMode = "safe"
     temperature: float | None = 0.3
     preset: str = "balanced"
 
@@ -130,7 +212,7 @@ class TranslationResult:
     body_ko: str
     foreword_ko: str = ""
     afterword_ko: str = ""
-    new_terms: list[GlossaryEntry] = field(default_factory=list)
+    new_terms: list[GlossaryProposal | GlossaryEntry] = field(default_factory=list)
     term_conflicts: list[TermConflict] = field(default_factory=list)
     episode_summary: str = ""
     qa_notes: list[str] = field(default_factory=list)

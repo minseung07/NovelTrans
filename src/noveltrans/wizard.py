@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import Thread
 from time import monotonic
@@ -20,7 +20,7 @@ from .config import AppConfig, ConfigManager, CredentialStore
 from .connectors import detect_connector
 from .errors import NovelTransError, PolicyViolation
 from .exporters import Exporter
-from .glossary import GlossaryManager
+from .glossary import GlossaryManager, is_confirmed_entry, is_pending_entry, normalize_source
 from .models import ExportOptions, GlossaryEntry, ParallelOptions, QualityOptions, TranslationOptions
 from .policy import SAFE_POLICY_TEXT, PolicyEngine
 from .progress import format_progress_lines, snapshot_project_progress, target_episode_numbers
@@ -467,6 +467,11 @@ def _glossary_strictness_label(value: str | None) -> str:
     return labels.get(value or "", f"직접 입력값: {value}")
 
 
+def _glossary_updates_label(value: str | None) -> str:
+    labels = {"off": "꺼짐", "safe": "safe만", "review": "검토만", "unsafe": "unsafe 허용"}
+    return labels.get(value or "", f"직접 입력값: {value}")
+
+
 def _style_label(value: str | None) -> str:
     labels = {
         "korean_webnovel_balanced": "한국 웹소설 균형체",
@@ -839,6 +844,8 @@ def _translation_options_from_config(config: AppConfig) -> TranslationOptions:
     options.keep_ruby_as_parentheses = config.default_keep_ruby_as_parentheses
     if config.default_glossary_strictness != baseline.default_glossary_strictness:
         options.glossary_strictness = config.default_glossary_strictness
+    if config.default_glossary_updates != baseline.default_glossary_updates:
+        options.glossary_updates = config.default_glossary_updates  # type: ignore[assignment]
     if config.default_temperature != baseline.default_temperature:
         options.temperature = config.default_temperature
     return options
@@ -997,7 +1004,10 @@ def _customize_new_project_defaults(prompt: TerminalPrompt, draft: NewProjectDra
 
 
 def _translation_detail_hint(translation: TranslationOptions) -> str:
-    return f"{_style_label(translation.style)}, {_honorific_label(translation.honorific_policy)}"
+    return (
+        f"{_style_label(translation.style)}, {_honorific_label(translation.honorific_policy)}, "
+        f"용어 {_glossary_strictness_label(translation.glossary_strictness)}/{_glossary_updates_label(translation.glossary_updates)}"
+    )
 
 
 def _customize_new_project_translation_detail(prompt: TerminalPrompt, draft: NewProjectDraft) -> None:
@@ -1009,6 +1019,7 @@ def _customize_new_project_translation_detail(prompt: TerminalPrompt, draft: New
                 Choice("문체", "style", _style_label(draft.translation.style)),
                 Choice("존댓말/호칭", "honorific", _honorific_label(draft.translation.honorific_policy)),
                 Choice("용어집 엄격도", "glossary", _glossary_strictness_label(draft.translation.glossary_strictness)),
+                Choice("용어집 자동 반영", "glossary_updates", _glossary_updates_label(draft.translation.glossary_updates)),
                 Choice("문장 변형 정도", "temperature", str(draft.translation.temperature)),
                 Choice("일본어 호칭 접미사 보존", "suffixes", _enabled_label(draft.translation.preserve_japanese_suffixes)),
                 Choice("작가 후기 번역", "translate_notes", _enabled_label(draft.translation.translate_author_notes)),
@@ -1188,7 +1199,10 @@ def _glossary_project_wizard(prompt: TerminalPrompt, project: Project) -> None:
             "용어집 작업",
             [
                 Choice("용어 추가/수정", "save"),
+                Choice("대기 용어 검토", "review"),
                 Choice("용어 잠금", "lock"),
+                Choice("용어 잠금 해제", "unlock"),
+                Choice("용어 제외", "reject"),
                 Choice("충돌 보기/해결", "conflict"),
                 Choice("메인으로", "back"),
             ],
@@ -1199,26 +1213,71 @@ def _glossary_project_wizard(prompt: TerminalPrompt, project: Project) -> None:
             return
         if action == "save":
             source = prompt.input("원문 용어", required=True)
-            target = prompt.input("한국어 번역", source, required=True)
+            target = prompt.input(
+                "한국어 번역",
+                "",
+                required=False,
+                body="비워두면 번역 대기 상태로 저장합니다. 원문과 같은 값은 확정 번역으로 저장하지 않습니다.",
+            )
+            if target.strip() == source.strip():
+                prompt.result("저장 차단", ["원문과 같은 번역은 확정 용어로 저장하지 않습니다."], ok=False)
+                prompt.pause()
+                continue
             term_type = _choose_term_type_wizard(prompt)
-            locked = prompt.confirm("잠금", default=True)
+            reading = prompt.input("읽기", "", body="선택 사항입니다. 예: おうとアルフェン")
+            aliases = _parse_comma_list(prompt.input("별칭", "", body="선택 사항입니다. 쉼표로 구분합니다."))
+            forbidden_targets = _parse_comma_list(
+                prompt.input("금지 번역어", "", body="선택 사항입니다. 쉼표로 구분합니다.")
+            )
+            episode_start, episode_end = _parse_optional_episode_scope(
+                prompt.input("적용 화 범위", "", body="선택 사항입니다. 예: 1-10, 12-, -20")
+            )
+            locked = bool(target.strip()) and prompt.confirm("잠금", default=True)
             glossary.add_or_update(
                 GlossaryEntry(
                     source=source,
                     target=target,
                     type=term_type,
+                    reading=reading,
                     confidence=1.0,
                     locked=locked,
-                    notes="user provided",
+                    notes="user provided" if target.strip() else "user provided; target pending",
+                    status="locked" if locked else "accepted_user" if target.strip() else "candidate",
+                    target_score=1.0 if target.strip() else 0.0,
+                    origin="user",
+                    aliases=aliases,
+                    forbidden_targets=forbidden_targets,
+                    episode_start=episode_start,
+                    episode_end=episode_end,
                 )
             )
             _sync_glossary_to_project_db(project, glossary)
-            prompt.result("저장 완료", [f"{source} -> {target}"])
+            prompt.result("저장 완료", [f"{source} -> {target or '(번역 대기)'}"])
             prompt.pause()
+        elif action == "review":
+            _review_pending_terms_wizard(prompt, project, glossary)
         elif action == "lock":
             source = prompt.input("잠글 원문 용어", required=True)
+            entry = glossary.entries.get(normalize_source(source))
             locked = glossary.lock_term(source)
-            prompt.result("잠금 완료" if locked else "용어 없음", [source], ok=locked)
+            if locked:
+                prompt.result("잠금 완료", [source], ok=True)
+            elif entry:
+                prompt.result("잠금 불가", ["확정된 한국어 번역이 있는 용어만 잠글 수 있습니다.", source], ok=False)
+            else:
+                prompt.result("용어 없음", [source], ok=False)
+            _sync_glossary_to_project_db(project, glossary)
+            prompt.pause()
+        elif action == "unlock":
+            source = prompt.input("잠금 해제할 원문 용어", required=True)
+            unlocked = glossary.unlock_term(source)
+            prompt.result("잠금 해제 완료" if unlocked else "용어 없음", [source], ok=unlocked)
+            _sync_glossary_to_project_db(project, glossary)
+            prompt.pause()
+        elif action == "reject":
+            source = prompt.input("제외할 원문 용어", required=True)
+            rejected = glossary.reject_term(source)
+            prompt.result("제외 완료" if rejected else "용어 없음", [source], ok=rejected)
             _sync_glossary_to_project_db(project, glossary)
             prompt.pause()
         elif action == "conflict":
@@ -1341,6 +1400,7 @@ def _edit_settings_category(prompt: TerminalPrompt, config: AppConfig, store: Cr
                 Choice("문체", "style", _style_label(config.default_style)),
                 Choice("존댓말/호칭", "honorific", _honorific_label(config.default_honorific_policy)),
                 Choice("용어집 엄격도", "glossary", _glossary_strictness_label(config.default_glossary_strictness)),
+                Choice("용어집 자동 반영", "glossary_updates", _glossary_updates_label(config.default_glossary_updates)),
                 Choice("문장 변형 정도", "temperature", str(config.default_temperature)),
                 Choice("일본어 호칭 접미사 보존", "suffixes", _enabled_label(config.default_preserve_japanese_suffixes)),
                 Choice("작가 후기 번역", "translate_notes", _enabled_label(config.default_translate_author_notes)),
@@ -1434,6 +1494,8 @@ def _edit_flat_setting(prompt: TerminalPrompt, config: AppConfig, store: Credent
         config.default_honorific_policy = _choose_honorific_policy_wizard(prompt, config.default_honorific_policy)
     elif action == "glossary":
         config.default_glossary_strictness = _choose_glossary_strictness_wizard(prompt, config.default_glossary_strictness)
+    elif action == "glossary_updates":
+        config.default_glossary_updates = _choose_glossary_updates_wizard(prompt, config.default_glossary_updates)
     elif action == "temperature":
         config.default_temperature = _choose_temperature_wizard(prompt, config.default_temperature) or 0.3
     elif action == "suffixes":
@@ -1614,6 +1676,7 @@ def _apply_translation_preset_to_options(
     options.preset = preset
     options.style = "korean_webnovel_balanced"
     options.glossary_strictness = "high"
+    options.glossary_updates = "safe"
     options.temperature = 0.3
     if preset == "fast":
         options.glossary_strictness = "medium"
@@ -1648,6 +1711,7 @@ def _apply_translation_preset_to_config(config: AppConfig, preset: str) -> None:
     config.default_reasoning_effort = options.reasoning_effort
     config.default_style = options.style
     config.default_glossary_strictness = options.glossary_strictness
+    config.default_glossary_updates = options.glossary_updates
     config.default_temperature = options.temperature or 0.3
 
 
@@ -1660,6 +1724,8 @@ def _edit_translation_option(prompt: TerminalPrompt, translation: TranslationOpt
         translation.honorific_policy = _choose_honorific_policy_wizard(prompt, translation.honorific_policy)
     elif action == "glossary":
         translation.glossary_strictness = _choose_glossary_strictness_wizard(prompt, translation.glossary_strictness)
+    elif action == "glossary_updates":
+        translation.glossary_updates = _choose_glossary_updates_wizard(prompt, translation.glossary_updates)  # type: ignore[assignment]
     elif action == "temperature":
         translation.temperature = _choose_temperature_wizard(prompt, translation.temperature)
     elif action == "suffixes":
@@ -1810,6 +1876,20 @@ def _choose_glossary_strictness_wizard(prompt: TerminalPrompt, default: str) -> 
     )
 
 
+def _choose_glossary_updates_wizard(prompt: TerminalPrompt, default: str) -> str:
+    return prompt.select(
+        "용어집 자동 반영",
+        [
+            Choice("꺼짐", "off", "proposal과 decision audit만 남김"),
+            Choice("Safe만", "safe", "빈 target 채우기와 동일 target 보강만 자동 적용"),
+            Choice("검토만", "review", "제안 target을 proposed 상태로만 저장"),
+            Choice("Unsafe 허용", "unsafe", "accepted_auto 변경도 명시적으로 허용"),
+        ],
+        default=default if default in {"off", "safe", "review", "unsafe"} else "safe",
+        body="strict 엄격도에서는 unsafe를 선택해도 실행 시 safe로 제한됩니다.",
+    )
+
+
 def _choose_temperature_wizard(prompt: TerminalPrompt, default: float | None) -> float | None:
     current = 0.3 if default is None else default
     value = prompt.select(
@@ -1863,6 +1943,35 @@ def _choose_term_type_wizard(prompt: TerminalPrompt) -> str:
         "proper_noun",
         "용어집의 분류값입니다. 확실하지 않으면 고유 표현을 쓰세요.",
     )
+
+
+def _parse_comma_list(value: str) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in value.split(","):
+        item = raw.strip()
+        if item and item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _parse_optional_episode_scope(value: str) -> tuple[int, int]:
+    raw = value.strip()
+    if not raw:
+        return 0, 0
+    try:
+        if "-" not in raw:
+            number = int(raw)
+            return max(0, number), max(0, number)
+        start_text, end_text = raw.split("-", 1)
+        start = int(start_text.strip()) if start_text.strip() else 0
+        end = int(end_text.strip()) if end_text.strip() else 0
+    except ValueError as exc:
+        raise NovelTransError("적용 화 범위는 1-10, 12-, -20 형식으로 입력하세요.") from exc
+    if start and end and start > end:
+        start, end = end, start
+    return max(0, start), max(0, end)
 
 
 def _select_or_custom_wizard(
@@ -2140,19 +2249,50 @@ def _select_project_wizard(prompt: TerminalPrompt, manager: ProjectManager) -> P
 
 
 def _sync_glossary_to_project_db(project: Project, glossary: GlossaryManager) -> None:
-    for entry in glossary.snapshot(limit=10_000):
-        project.db.upsert_glossary_entry(entry.source, entry.target, entry.type, entry.confidence, entry.locked)
+    for entry in glossary.snapshot(limit=10_000, include_inactive=True):
+        project.db.upsert_glossary_entry(
+            entry.source,
+            entry.target,
+            entry.type,
+            entry.confidence,
+            entry.locked,
+            reading=entry.reading,
+            status=entry.status,
+            aliases=entry.aliases,
+            variants=entry.variants,
+            forbidden_targets=entry.forbidden_targets,
+            notes=entry.notes,
+            source_score=entry.source_score,
+            target_score=entry.target_score,
+            occurrence_count=entry.occurrence_count,
+            episode_count=entry.episode_count,
+            first_seen_episode=entry.first_seen_episode,
+            last_seen_episode=entry.last_seen_episode,
+            origin=entry.origin,
+            priority=entry.priority,
+            evidence=[asdict(item) for item in entry.evidence],
+            episode_start=entry.episode_start,
+            episode_end=entry.episode_end,
+            speaker=entry.speaker,
+            matching_policy=entry.matching_policy,
+        )
 
 
 def _glossary_snapshot_lines(glossary: GlossaryManager) -> list[str]:
-    entries = glossary.snapshot(limit=20)
+    entries = glossary.snapshot(limit=20, include_inactive=True)
     lines = ["최근 용어"]
     if not entries:
         lines.append("(비어 있음)")
     for entry in entries:
-        locked = "잠금" if entry.locked else "편집"
+        locked = "잠금" if entry.locked else entry.status
         target = entry.target or "(번역 대기)"
-        lines.append(f"- {entry.source} -> {target} [{entry.type}, {locked}, {entry.confidence:.2f}]")
+        markers = []
+        if is_pending_entry(entry):
+            markers.append("검토 필요")
+        if is_confirmed_entry(entry) and entry.forbidden_targets:
+            markers.append("금칙 " + str(len(entry.forbidden_targets)))
+        suffix = ", " + ", ".join(markers) if markers else ""
+        lines.append(f"- {entry.source} -> {target} [{entry.type}, {locked}, {entry.confidence:.2f}{suffix}]")
     conflicts = glossary.conflict_snapshot(limit=5)
     if conflicts:
         lines.append("")
@@ -2191,6 +2331,61 @@ def _resolve_conflict_wizard(prompt: TerminalPrompt, project: Project, glossary:
         prompt.result("충돌 해결 완료", [selected.source])
     else:
         prompt.result("충돌 해결 실패", [selected.source], ok=False)
+    prompt.pause()
+
+
+def _review_pending_terms_wizard(prompt: TerminalPrompt, project: Project, glossary: GlossaryManager) -> None:
+    pending = glossary.pending_entries(limit=50)
+    if not pending:
+        prompt.result("대기 용어 없음", ["검토할 자동 후보가 없습니다."])
+        prompt.pause()
+        return
+    choices = [
+        Choice(
+            f"{entry.source} [{entry.type}, {entry.confidence:.2f}]",
+            str(index),
+            f"first_seen={entry.first_seen_episode or '-'}",
+        )
+        for index, entry in enumerate(pending)
+    ]
+    selected = pending[int(prompt.select("검토할 대기 용어", choices, default="0"))]
+    action = prompt.select(
+        "처리 방식",
+        [
+            Choice("번역 확정", "approve"),
+            Choice("번역 확정하고 잠금", "lock"),
+            Choice("용어 제외", "reject"),
+            Choice("계속 대기", "pending"),
+        ],
+        default="approve",
+        body=[
+            f"원문: {selected.source}",
+            f"유형: {selected.type}",
+            f"메모: {selected.notes}",
+        ],
+    )
+    if action in {"approve", "lock"}:
+        target = prompt.input("한국어 번역", selected.target, required=True)
+        if target.strip() == selected.source.strip():
+            prompt.result("저장 차단", ["원문과 같은 번역은 확정 용어로 저장하지 않습니다."], ok=False)
+            prompt.pause()
+            return
+        selected.target = target
+        selected.locked = action == "lock"
+        selected.status = "locked" if selected.locked else "accepted_user"
+        selected.confidence = max(selected.confidence, 0.95)
+        selected.target_score = max(selected.target_score, 1.0)
+        selected.origin = "user"
+        selected.notes = (selected.notes + "; " if selected.notes else "") + "reviewed by user"
+        glossary.add_or_update(selected)
+        _sync_glossary_to_project_db(project, glossary)
+        prompt.result("검토 완료", [f"{selected.source} -> {selected.target}"])
+    elif action == "reject":
+        glossary.reject_term(selected.source)
+        _sync_glossary_to_project_db(project, glossary)
+        prompt.result("용어 제외 완료", [selected.source])
+    else:
+        prompt.result("대기 유지", [selected.source])
     prompt.pause()
 
 

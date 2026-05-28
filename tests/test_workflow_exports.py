@@ -18,7 +18,8 @@ from noveltrans.models import ExportOptions, ParallelOptions, QualityOptions, Tr
 from noveltrans.models import EpisodeMetadata, EpisodeText, Section
 from noveltrans.project import ProjectManager
 from noveltrans.errors import ConfigurationError, ProjectError, SourceInputError, TranslationError
-from noveltrans.exporters import Exporter
+from noveltrans.exporters import Exporter, normalize_export_formats
+from noveltrans.glossary import GlossaryManager
 from noveltrans.cli import main
 from noveltrans.models import GlossaryEntry, TranslationResult
 from noveltrans.progress import format_progress_line, snapshot_project_progress, target_episode_numbers
@@ -418,7 +419,10 @@ class WorkflowExportTests(unittest.TestCase):
                             source="魔導機関",
                             target="마도기관",
                             type="organization",
+                            reading="まどうきかん",
                             confidence=0.91,
+                            aliases=["魔導エンジン"],
+                            forbidden_targets=["마도 기관"],
                         )
                     ],
                 )
@@ -439,10 +443,44 @@ class WorkflowExportTests(unittest.TestCase):
             run_translation_and_export(project, translator=TermTranslator())
             with sqlite3.connect(project.root / "project.db") as conn:
                 row = conn.execute(
-                    "SELECT target, type, locked FROM glossary_entries WHERE source = ?",
+                    "SELECT target, type, locked, reading, status, aliases, forbidden_targets FROM glossary_entries WHERE source = ?",
                     ("魔導機関",),
                 ).fetchone()
-            self.assertEqual(row, ("마도기관", "organization", 0))
+            self.assertEqual(row[:5], ("마도기관", "organization", 0, "まどうきかん", "accepted_auto"))
+            self.assertIn("魔導エンジン", row[5])
+            self.assertIn("마도 기관", row[6])
+
+    def test_glossary_v2_sqlite_schema_contains_audit_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "terms.txt"
+            source.write_text("# 第1話\n魔導機関。", encoding="utf-8")
+            project = create_project_from_local_file(
+                manager=ProjectManager(root / "projects"),
+                name="schema_terms",
+                input_path=source,
+                translation=TranslationOptions(model="gpt-5.5"),
+                parallel=ParallelOptions(max_parallel_episodes=1),
+                quality=QualityOptions(run_qa_pass=False),
+                export=ExportOptions(formats=["txt"]),
+            )
+
+            with sqlite3.connect(project.root / "project.db") as conn:
+                entry_columns = {
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(glossary_entries)").fetchall()
+                }
+                tables = {
+                    row[0]
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+                }
+
+            self.assertIn("source_score", entry_columns)
+            self.assertIn("target_score", entry_columns)
+            self.assertIn("occurrence_count", entry_columns)
+            self.assertIn("last_seen_episode", entry_columns)
+            self.assertIn("glossary_occurrences", tables)
+            self.assertIn("glossary_decisions", tables)
 
     def test_parallel_translation_does_not_pass_cross_episode_previous_summary(self) -> None:
         class SummaryRecordingTranslator(Translator):
@@ -507,6 +545,42 @@ class WorkflowExportTests(unittest.TestCase):
             run_translation_and_export(project, translator=translator)
             self.assertEqual(translator.seen, ["", "요약 1"])
 
+    def test_episode_scoped_glossary_is_only_injected_for_matching_episode(self) -> None:
+        class GlossaryRecordingTranslator(Translator):
+            def __init__(self) -> None:
+                self.seen: dict[int, list[str]] = {}
+
+            def translate_episode(self, episode, options, glossary, previous_summary=""):
+                self.seen[episode.episode_no] = [entry.source for entry in glossary]
+                return TranslationResult(title_ko=f"제{episode.episode_no}화", body_ko="본문")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "scoped_terms.txt"
+            source.write_text("# 第1話\n王都アルフェン。\n\n# 第2話\n王都アルフェン。", encoding="utf-8")
+            project = create_project_from_local_file(
+                manager=ProjectManager(root / "projects"),
+                name="scoped_terms",
+                input_path=source,
+                translation=TranslationOptions(model="gpt-5.5"),
+                parallel=ParallelOptions(max_parallel_episodes=1),
+                quality=QualityOptions(run_qa_pass=False),
+                export=ExportOptions(formats=["txt"]),
+            )
+            GlossaryManager(project.glossary_dir).add_or_update(
+                GlossaryEntry(
+                    source="王都アルフェン",
+                    target="왕도 알펜",
+                    episode_start=2,
+                    episode_end=2,
+                )
+            )
+            translator = GlossaryRecordingTranslator()
+            run_translation_and_export(project, translator=translator)
+
+            self.assertNotIn("王都アルフェン", translator.seen[1])
+            self.assertIn("王都アルフェン", translator.seen[2])
+
     def test_quality_report_includes_global_term_consistency_issues(self) -> None:
         class InconsistentTranslator(Translator):
             def translate_episode(self, episode, options, glossary, previous_summary=""):
@@ -535,6 +609,82 @@ class WorkflowExportTests(unittest.TestCase):
             report = json.loads((project.logs_dir / "quality_report.json").read_text(encoding="utf-8"))
             self.assertTrue(report["global_term_issues"])
             self.assertEqual(report["global_term_issues"][0]["target"], "마도기관")
+
+    def test_global_term_consistency_uses_matching_policy(self) -> None:
+        class SpacedTranslator(Translator):
+            def translate_episode(self, episode, options, glossary, previous_summary=""):
+                return TranslationResult(title_ko=f"제{episode.episode_no}화", body_ko="마도 기관")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "global_terms_spacing.txt"
+            source.write_text("# 第1話\n魔導機関。\n\n# 第2話\n魔導機関。", encoding="utf-8")
+            project = create_project_from_local_file(
+                manager=ProjectManager(root / "projects"),
+                name="global_terms_spacing",
+                input_path=source,
+                translation=TranslationOptions(model="gpt-5.5"),
+                parallel=ParallelOptions(max_parallel_episodes=1),
+                quality=QualityOptions(run_term_consistency_pass=True),
+                export=ExportOptions(formats=["txt"]),
+            )
+            GlossaryManager(project.glossary_dir).add_or_update(
+                GlossaryEntry(
+                    source="魔導機関",
+                    target="마도기관",
+                    status="accepted_auto",
+                    confidence=0.9,
+                    matching_policy="spacing_flexible",
+                )
+            )
+            run_translation_and_export(project, translator=SpacedTranslator())
+            report = json.loads((project.logs_dir / "quality_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["global_term_issues"], [])
+
+    def test_unresolved_glossary_conflicts_are_reported_in_exports_and_quality_report(self) -> None:
+        class ConflictTranslator(Translator):
+            def translate_episode(self, episode, options, glossary, previous_summary=""):
+                if episode.episode_no == 1:
+                    return TranslationResult(
+                        title_ko="제1화",
+                        body_ko="왕도 알펜",
+                        new_terms=[GlossaryEntry(source="王都アルフェン", target="왕도 알펜", confidence=0.9)],
+                    )
+                return TranslationResult(
+                    title_ko="제2화",
+                    body_ko="알펜 왕도",
+                    new_terms=[GlossaryEntry(source="王都アルフェン", target="알펜 왕도", confidence=0.95)],
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "term_conflict.txt"
+            source.write_text("# 第1話\n王都アルフェン。\n\n# 第2話\n王都アルフェン。", encoding="utf-8")
+            project = create_project_from_local_file(
+                manager=ProjectManager(root / "projects"),
+                name="term_conflict",
+                input_path=source,
+                translation=TranslationOptions(model="gpt-5.5"),
+                parallel=ParallelOptions(max_parallel_episodes=1),
+                quality=QualityOptions(run_term_consistency_pass=True),
+                export=ExportOptions(formats=["txt", "epub"]),
+            )
+            run_translation_and_export(project, translator=ConflictTranslator())
+
+            txt = (project.exports_dir / "term_conflict.txt").read_text(encoding="utf-8")
+            self.assertIn("미해결 용어 충돌", txt)
+            self.assertIn("王都アルフェン", txt)
+            self.assertIn("알펜 왕도", txt)
+
+            report = json.loads((project.logs_dir / "quality_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["unresolved_term_conflicts"][0]["source"], "王都アルフェン")
+            quality_text = (project.logs_dir / "quality_report.txt").read_text(encoding="utf-8")
+            self.assertIn("Unresolved Term Conflicts", quality_text)
+
+            with zipfile.ZipFile(project.exports_dir / "term_conflict.epub") as epub:
+                glossary = epub.read("OEBPS/glossary.xhtml").decode("utf-8")
+            self.assertIn("미해결 용어 충돌", glossary)
+            self.assertIn("王都アルフェン", glossary)
 
     def test_exports_can_exclude_author_notes(self) -> None:
         class AfterwordTranslator(Translator):
@@ -675,6 +825,11 @@ class WorkflowExportTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):
                 run_translation_and_export(project, dry_run=True)
             self.assertFalse((project.translated_dir / "episode_001.ko.md").exists())
+
+    def test_docx_export_format_is_rejected_for_explicit_requests(self) -> None:
+        with self.assertRaises(ConfigurationError) as context:
+            normalize_export_formats(["txt", "docx"])
+        self.assertIn("DOCX 출력은 제거", str(context.exception))
 
     def test_export_without_translated_chapters_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

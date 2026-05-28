@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 
 from .errors import ConfigurationError, ProjectError
-from .glossary import GlossaryManager, is_pending_auto_seed
+from .glossary import GlossaryManager, is_confirmed_entry
 from .models import ProjectManifest
 from .project import Project
 from .utils import atomic_write_text, escape_xml, now_iso
@@ -34,12 +34,14 @@ class Exporter:
 
 def normalize_export_formats(formats: list[str]) -> list[str]:
     requested = [item.strip().lower() for item in formats if item.strip()]
-    requested = [item for item in requested if item not in REMOVED_FORMATS]
+    removed = sorted(set(requested) & REMOVED_FORMATS)
+    if removed:
+        raise ConfigurationError("DOCX 출력은 제거되었습니다. 지원 형식은 txt 또는 epub입니다.")
     unsupported = sorted(set(requested) - SUPPORTED_FORMATS)
     if unsupported:
         raise ConfigurationError(f"지원하지 않는 출력 형식: {', '.join(unsupported)}")
     if not requested:
-        raise ConfigurationError("DOCX 출력은 제거되었습니다. txt 또는 epub 중 하나 이상을 선택하세요.")
+        raise ConfigurationError("txt 또는 epub 중 하나 이상을 선택하세요.")
     return requested
 
 
@@ -227,28 +229,80 @@ def _is_author_note_heading(heading: str) -> bool:
 def _glossary_lines(project: Project) -> list[str]:
     manager = GlossaryManager(project.glossary_dir)
     lines = ["", "용어집"]
-    entries = [entry for entry in manager.snapshot(limit=500) if not is_pending_auto_seed(entry)]
+    entries = [entry for entry in manager.snapshot(limit=500) if is_confirmed_entry(entry)]
+    conflicts = manager.conflict_snapshot(limit=500)
     if not entries:
         lines.append("- 확정된 용어가 아직 없습니다.")
     for entry in entries:
-        lines.append(f"- {entry.source} -> {entry.target} ({entry.type}, confidence={entry.confidence:.2f})")
+        aliases = f", aliases={', '.join(entry.aliases)}" if entry.aliases else ""
+        reading = f", reading={entry.reading}" if entry.reading else ""
+        scope = _glossary_scope(entry)
+        scope_text = f", scope={scope}" if scope else ""
+        lines.append(
+            f"- {entry.source} -> {entry.target} "
+            f"({entry.type}, {entry.status}, confidence={entry.confidence:.2f}{reading}{aliases}{scope_text})"
+        )
+    if conflicts:
+        lines.append("")
+        lines.append("미해결 용어 충돌")
+        for conflict in conflicts:
+            lines.append(
+                f"- {conflict.source}: 기존={conflict.previous or '(없음)'}, "
+                f"제안={conflict.suggested or '(없음)'}, 권장={conflict.recommendation}"
+            )
     return lines
 
 
 def _glossary_xhtml(project: Project) -> str:
     manager = GlossaryManager(project.glossary_dir)
-    entries = [entry for entry in manager.snapshot(limit=500) if not is_pending_auto_seed(entry)]
+    entries = [entry for entry in manager.snapshot(limit=500) if is_confirmed_entry(entry)]
+    conflicts = manager.conflict_snapshot(limit=500)
+    lines: list[str] = []
     if not entries:
-        return "<p class=\"empty-note\">확정된 용어가 아직 없습니다.</p>"
-    lines = ["<dl class=\"glossary-list\">"]
-    for entry in entries:
-        lines.append(
-            f"<dt>{escape_xml(entry.source)}</dt>"
-            f"<dd>{escape_xml(entry.target)} "
-            f"<span class=\"term-meta\">{escape_xml(entry.type)}, {entry.confidence:.2f}</span></dd>"
-        )
-    lines.append("</dl>")
+        lines.append("<p class=\"empty-note\">확정된 용어가 아직 없습니다.</p>")
+    else:
+        lines.append("<dl class=\"glossary-list\">")
+        for entry in entries:
+            detail_parts = [entry.type, entry.status, f"{entry.confidence:.2f}"]
+            if entry.reading:
+                detail_parts.append(entry.reading)
+            if entry.aliases:
+                detail_parts.append("alias: " + ", ".join(entry.aliases))
+            scope = _glossary_scope(entry)
+            if scope:
+                detail_parts.append("scope: " + scope)
+            lines.append(
+                f"<dt>{escape_xml(entry.source)}</dt>"
+                f"<dd>{escape_xml(entry.target)} "
+                f"<span class=\"term-meta\">{escape_xml(', '.join(detail_parts))}</span></dd>"
+            )
+        lines.append("</dl>")
+    if conflicts:
+        lines.append("<h2>미해결 용어 충돌</h2>")
+        lines.append("<dl class=\"glossary-list conflict-list\">")
+        for conflict in conflicts:
+            detail = (
+                f"기존={conflict.previous or '(없음)'}, "
+                f"제안={conflict.suggested or '(없음)'}, 권장={conflict.recommendation}"
+            )
+            lines.append(
+                f"<dt>{escape_xml(conflict.source)}</dt>"
+                f"<dd><span class=\"term-meta\">{escape_xml(detail)}</span></dd>"
+            )
+        lines.append("</dl>")
     return "\n".join(lines)
+
+
+def _glossary_scope(entry: object) -> str:
+    start = int(getattr(entry, "episode_start", 0) or 0)
+    end = int(getattr(entry, "episode_end", 0) or 0)
+    if start and end:
+        return f"{start}-{end}"
+    if start:
+        return f"{start}+"
+    if end:
+        return f"1-{end}"
+    return ""
 
 
 def _epub_cover(manifest: ProjectManifest) -> str:

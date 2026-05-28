@@ -1,0 +1,28 @@
+# common webnovel/navigation/noise terms
+=本文
+=次話
+=前話
+=目次
+=作者
+=感想
+=評価
+=ブックマーク
+=ログイン
+=ユーザー
+=ページ
+=ポイント
+=レビュー
+=ランキング
+
+# narration glue that should not become terminology
+>それから
+>ところが
+>けれど
+>けれども
+>そうして
+
+# chapter labels
+/^プロローグ$/
+/^エピローグ$/
+/^あとがき$/
+/^まえがき$/

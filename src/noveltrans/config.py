@@ -29,6 +29,7 @@ CONFIG_STRING_FIELDS = {
     "default_style",
     "default_honorific_policy",
     "default_glossary_strictness",
+    "default_glossary_updates",
     "default_url_collection_mode",
     "default_permission_note",
     "watermark",
@@ -63,6 +64,7 @@ SOURCE_MODES = {"url", "file", "clipboard", "manual", "editor"}
 TRANSLATION_PRESETS = {"fast", "balanced", "literary", "literal", "glossary"}
 REASONING_EFFORTS = {"low", "medium", "high"}
 GLOSSARY_STRICTNESS = {"low", "medium", "high", "strict"}
+GLOSSARY_UPDATES = {"off", "safe", "review", "unsafe"}
 URL_COLLECTION_MODES = {"auto", "user-file", "ask"}
 EXPORT_FORMATS = {"txt", "epub"}
 REMOVED_EXPORT_FORMATS = {"docx"}
@@ -82,6 +84,7 @@ class AppConfig:
     default_translate_author_notes: bool = True
     default_keep_ruby_as_parentheses: bool = False
     default_glossary_strictness: str = "high"
+    default_glossary_updates: str = "safe"
     default_temperature: float = 0.3
     default_parallel_episodes: int = 4
     default_split_long_episode: bool = False
@@ -172,6 +175,8 @@ def _config_from_values(values: dict[str, Any]) -> AppConfig:
         raise ConfigurationError("Malformed config field default_reasoning_effort")
     if values["default_glossary_strictness"] not in GLOSSARY_STRICTNESS:
         raise ConfigurationError("Malformed config field default_glossary_strictness")
+    if values["default_glossary_updates"] not in GLOSSARY_UPDATES:
+        raise ConfigurationError("Malformed config field default_glossary_updates")
     if values["default_url_collection_mode"] not in URL_COLLECTION_MODES:
         raise ConfigurationError("Malformed config field default_url_collection_mode")
     output_formats = [

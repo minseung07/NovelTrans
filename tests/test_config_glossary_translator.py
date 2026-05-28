@@ -18,7 +18,7 @@ from noveltrans.cli import main
 from noveltrans.estimate import estimate_translation
 from noveltrans.errors import ConfigurationError, TranslationError
 from noveltrans.glossary import GlossaryManager
-from noveltrans.models import EpisodeText, ExportOptions, GlossaryEntry, ParallelOptions, QualityOptions, Section
+from noveltrans.models import EpisodeText, ExportOptions, GlossaryEntry, GlossaryProposal, ParallelOptions, QualityOptions, Section
 from noveltrans.models import TranslationOptions, WorkMetadata
 from noveltrans.project import Project, ProjectManager
 from noveltrans.prompts import build_episode_payload
@@ -235,6 +235,12 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             self.assertEqual(legacy.load_manifest().slug, "legacy")
             self.assertEqual([item.root.name for item in manager.list_projects()], ["legacy", "manifest"])
 
+            project.manifest_path.write_text(
+                project.manifest_path.read_text(encoding="utf-8").replace('"formats": ["txt"]', '"formats": ["txt", "docx"]'),
+                encoding="utf-8",
+            )
+            self.assertEqual(project.load_manifest().export.formats, ["txt"])
+
     def test_doctor_reports_runtime_configuration(self) -> None:
         class EmptyStore:
             def __init__(self, config_dir=None) -> None:
@@ -333,6 +339,158 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             self.assertEqual(manager.snapshot()[0].target, "알펜 왕도")
             self.assertEqual(manager.conflict_snapshot(), [])
 
+    def test_glossary_status_aliases_and_forbidden_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = GlossaryManager(Path(tmp))
+            manager.add_or_update(
+                GlossaryEntry(
+                    source="魔導機関",
+                    target="",
+                    status="pending",
+                    aliases=["魔導エンジン", "魔導機関"],
+                    forbidden_targets=["마도 기관"],
+                )
+            )
+
+            entry = manager.entries["魔導機関"]
+            self.assertEqual(entry.status, "candidate")
+            self.assertEqual(entry.aliases, ["魔導エンジン"])
+            self.assertEqual(manager.pending_entries()[0].source, "魔導機関")
+            self.assertFalse(manager.lock_term("魔導機関"))
+
+            conflicts = manager.update_from_terms(
+                [GlossaryEntry(source="魔導機関", target="마도 기관", confidence=0.99)]
+            )
+            self.assertEqual(conflicts[-1].recommendation, "keep_previous")
+            self.assertEqual(manager.entries["魔導機関"].target, "")
+
+            conflicts = manager.update_from_terms(
+                [GlossaryEntry(source="魔導機関", target="마도기관", confidence=0.95)]
+            )
+            self.assertEqual(conflicts, [])
+            self.assertEqual(manager.entries["魔導機関"].status, "accepted_auto")
+            self.assertEqual(manager.entries["魔導機関"].target, "마도기관")
+
+            conflicts = manager.update_from_terms(
+                [GlossaryEntry(source="魔導機関", target="마도엔진", confidence=0.99)]
+            )
+            self.assertEqual(conflicts[-1].recommendation, "review")
+            self.assertEqual(manager.entries["魔導機関"].status, "needs_review")
+            self.assertEqual(manager.entries["魔導機関"].target, "마도기관")
+
+            self.assertTrue(manager.reject_term("魔導機関"))
+            self.assertEqual(manager.snapshot(), [])
+            self.assertEqual(manager.snapshot(include_inactive=True)[0].status, "forbidden")
+
+    def test_glossary_lock_requires_existing_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = GlossaryManager(Path(tmp))
+            manager.add_or_update(GlossaryEntry(source="魔導機関", status="candidate"))
+            self.assertFalse(manager.lock_term("魔導機関"))
+
+            manager.add_or_update(GlossaryEntry(source="魔導機関", target="마도기관", status="accepted_auto"))
+            self.assertTrue(manager.lock_term("魔導機関"))
+            self.assertEqual(manager.entries["魔導機関"].status, "locked")
+
+    def test_glossary_proposals_require_source_evidence_and_do_not_overwrite_user_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = GlossaryManager(Path(tmp))
+            episode = EpisodeText(
+                episode_no=1,
+                title="第1話",
+                sections=[Section(type="body", text="黒騎士は王都へ向かった。")],
+            )
+            manager.add_or_update(
+                GlossaryEntry(
+                    source="黒騎士",
+                    target="흑기사",
+                    status="accepted_user",
+                    origin="user",
+                    confidence=1.0,
+                )
+            )
+
+            conflicts = manager.update_from_terms(
+                [
+                    GlossaryProposal(
+                        source="白騎士",
+                        target="백기사",
+                        confidence=0.99,
+                        reason="not in source",
+                    ),
+                    GlossaryProposal(
+                        source="黒騎士",
+                        target="검은 기사",
+                        confidence=0.99,
+                        reason="alternate target",
+                    ),
+                ],
+                episode=episode,
+                strictness="high",
+                update_mode="safe",
+            )
+
+            self.assertEqual(manager.entries["黒騎士"].target, "흑기사")
+            self.assertFalse(any(entry.source == "白騎士" for entry in manager.snapshot(include_inactive=True)))
+            self.assertTrue(any(conflict.reason == "user_accepted_conflict" for conflict in conflicts))
+            self.assertTrue((Path(tmp) / "proposals.jsonl").exists())
+            self.assertIn("source_not_found", (Path(tmp) / "decisions.jsonl").read_text(encoding="utf-8"))
+
+    def test_glossary_safe_merge_promotes_only_empty_candidate_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = GlossaryManager(Path(tmp))
+            episode = EpisodeText(
+                episode_no=1,
+                title="第1話",
+                sections=[Section(type="body", text="魔導機関が起動した。")],
+            )
+            manager.add_or_update(GlossaryEntry(source="魔導機関", status="candidate", source_score=0.82))
+
+            conflicts = manager.update_from_terms(
+                [
+                    GlossaryProposal(
+                        source="魔導機関",
+                        target="마도기관",
+                        type="organization",
+                        confidence=0.91,
+                        evidence_quote="魔導機関が起動した",
+                        used_in_translation=True,
+                    )
+                ],
+                episode=episode,
+                strictness="high",
+                update_mode="safe",
+            )
+
+            self.assertEqual(conflicts, [])
+            self.assertEqual(manager.entries["魔導機関"].status, "accepted_auto")
+            self.assertEqual(manager.entries["魔導機関"].target, "마도기관")
+
+    def test_glossary_unsafe_mode_can_replace_auto_terms_but_not_user_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = GlossaryManager(Path(tmp))
+            episode = EpisodeText(
+                episode_no=1,
+                title="第1話",
+                sections=[Section(type="body", text="魔導機関と黒騎士。")],
+            )
+            manager.add_or_update(GlossaryEntry(source="魔導機関", target="마도기관", status="accepted_auto"))
+            manager.add_or_update(GlossaryEntry(source="黒騎士", target="흑기사", status="accepted_user", origin="user"))
+
+            conflicts = manager.update_from_terms(
+                [
+                    GlossaryProposal(source="魔導機関", target="마도 엔진", confidence=0.99),
+                    GlossaryProposal(source="黒騎士", target="검은 기사", confidence=0.99),
+                ],
+                episode=episode,
+                strictness="high",
+                update_mode="unsafe",
+            )
+
+            self.assertEqual(manager.entries["魔導機関"].target, "마도 엔진")
+            self.assertEqual(manager.entries["黒騎士"].target, "흑기사")
+            self.assertTrue(any(conflict.reason == "user_accepted_conflict" for conflict in conflicts))
+
     def test_auto_seeded_glossary_terms_are_prompted_as_pending_targets(self) -> None:
         episode = EpisodeText(episode_no=1, title="第1話", sections=[Section(type="body", text="本文。")])
         payload = build_episode_payload(
@@ -348,7 +506,26 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             ],
         )
         self.assertIn('"target": ""', payload)
-        self.assertIn("target pending", payload)
+        self.assertIn('"status": "candidate"', payload)
+        self.assertIn("candidate only", payload)
+
+    def test_prompt_splits_locked_accepted_and_candidate_terms(self) -> None:
+        episode = EpisodeText(episode_no=1, title="第1話", sections=[Section(type="body", text="黒騎士。王都。魔導機関。")])
+        payload = json.loads(
+            build_episode_payload(
+                episode,
+                TranslationOptions(),
+                [
+                    GlossaryEntry(source="黒騎士", target="흑기사", status="locked", locked=True),
+                    GlossaryEntry(source="王都", target="왕도", status="accepted_auto"),
+                    GlossaryEntry(source="魔導機関", target="", status="candidate"),
+                ],
+            )
+        )
+        self.assertEqual([item["source"] for item in payload["locked_glossary"]], ["黒騎士"])
+        self.assertEqual([item["source"] for item in payload["accepted_glossary"]], ["王都"])
+        self.assertEqual([item["source"] for item in payload["candidate_terms"]], ["魔導機関"])
+        self.assertNotIn("glossary", payload)
 
     def test_openai_response_extraction_and_result_parse(self) -> None:
         translator = OpenAITranslator(api_key="sk-test")
@@ -556,6 +733,42 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
         )
         self.assertFalse(any(issue.code == "glossary_target_missing" for issue in issues))
 
+    def test_qa_glossary_strictness_controls_checked_entries(self) -> None:
+        source = EpisodeText(
+            episode_no=1,
+            title="第1話",
+            sections=[Section(type="body", text="王都アルフェン。黒騎士。")],
+        )
+        result = result_from_payload(
+            {
+                "title_ko": "제1화",
+                "foreword_ko": "",
+                "body_ko": "왕도. 기사.",
+                "afterword_ko": "",
+                "new_terms": [],
+                "term_conflicts": [],
+                "episode_summary": "",
+                "qa_notes": [],
+            }
+        )
+        glossary = [
+            GlossaryEntry(source="王都アルフェン", target="왕도 알펜", status="accepted_auto"),
+            GlossaryEntry(source="黒騎士", target="흑기사", status="locked", locked=True),
+        ]
+
+        low = QAEngine().run(source, result, glossary, glossary_strictness="low")
+        medium = QAEngine().run(source, result, glossary, glossary_strictness="medium")
+        high = QAEngine().run(source, result, glossary, glossary_strictness="high")
+        strict = QAEngine().run(source, result, glossary, glossary_strictness="strict")
+
+        self.assertFalse(any(issue.code.startswith("glossary_") for issue in low))
+        self.assertFalse(any("王都アルフェン" in issue.message for issue in medium))
+        self.assertTrue(any(issue.code == "glossary_locked_target_changed" for issue in medium))
+        self.assertTrue(any("王都アルフェン" in issue.message for issue in high))
+        locked_strict = [issue for issue in strict if issue.code == "glossary_locked_target_changed"]
+        self.assertTrue(locked_strict)
+        self.assertEqual(locked_strict[0].severity, "warning")
+
     def test_qa_skips_pending_auto_seeded_glossary_terms(self) -> None:
         source = EpisodeText(episode_no=1, title="第1話", sections=[Section(type="body", text="王都アルフェン。")])
         result = result_from_payload(
@@ -619,7 +832,78 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             result,
             [GlossaryEntry(source="アリシア", target="알리시아", type="person")],
         )
-        self.assertTrue(any(issue.code == "name_variant" for issue in issues))
+        self.assertTrue(any(issue.code == "glossary_variant_suspected" for issue in issues))
+
+    def test_qa_uses_glossary_aliases_and_forbidden_targets(self) -> None:
+        source = EpisodeText(episode_no=1, title="第1話", sections=[Section(type="body", text="魔導エンジンが起動した。")])
+        result = result_from_payload(
+            {
+                "title_ko": "제1화",
+                "foreword_ko": "",
+                "body_ko": "마도 기관이 기동했다.",
+                "afterword_ko": "",
+                "new_terms": [],
+                "term_conflicts": [],
+                "episode_summary": "",
+                "qa_notes": [],
+            }
+        )
+        issues = QAEngine().run(
+            source,
+            result,
+            [
+                GlossaryEntry(
+                    source="魔導機関",
+                    target="마도기관",
+                    aliases=["魔導エンジン"],
+                    forbidden_targets=["마도 기관"],
+                )
+            ],
+        )
+        self.assertTrue(any(issue.code == "glossary_target_missing" for issue in issues))
+        self.assertTrue(any(issue.code == "glossary_forbidden_target_used" for issue in issues))
+
+    def test_qa_respects_glossary_episode_scope(self) -> None:
+        source = EpisodeText(episode_no=1, title="第1話", sections=[Section(type="body", text="王都アルフェン。")])
+        result = result_from_payload(
+            {
+                "title_ko": "제1화",
+                "foreword_ko": "",
+                "body_ko": "왕도.",
+                "afterword_ko": "",
+                "new_terms": [],
+                "term_conflicts": [],
+                "episode_summary": "",
+                "qa_notes": [],
+            }
+        )
+        issues = QAEngine().run(
+            source,
+            result,
+            [GlossaryEntry(source="王都アルフェン", target="왕도 알펜", episode_start=2)],
+        )
+        self.assertFalse(any(issue.code == "glossary_target_missing" for issue in issues))
+
+    def test_qa_reports_contextual_glossary_mismatch(self) -> None:
+        source = EpisodeText(episode_no=1, title="第1話", sections=[Section(type="body", text="騎士団長が笑った。")])
+        result = result_from_payload(
+            {
+                "title_ko": "제1화",
+                "foreword_ko": "",
+                "body_ko": "기사대장이 웃었다.",
+                "afterword_ko": "",
+                "new_terms": [],
+                "term_conflicts": [],
+                "episode_summary": "",
+                "qa_notes": [],
+            }
+        )
+        issues = QAEngine().run(
+            source,
+            result,
+            [GlossaryEntry(source="騎士団長", target="기사단장", matching_policy="contextual")],
+        )
+        self.assertTrue(any(issue.code == "glossary_context_mismatch" for issue in issues))
 
     def test_qa_reports_mixed_speech_style_candidates(self) -> None:
         source = EpisodeText(episode_no=1, title="第1話", sections=[Section(type="body", text="会話。")])

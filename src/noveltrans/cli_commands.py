@@ -12,7 +12,8 @@ from pathlib import Path
 from . import __version__
 from .config import AppConfig, ConfigManager, CredentialStore
 from .connectors import get_connectors
-from .exporters import Exporter
+from .exporters import Exporter, normalize_export_formats
+from .glossary import GlossaryManager, is_pending_entry
 from .models import ExportOptions, ParallelOptions, QualityOptions, TranslationOptions
 from .policy import PolicyEngine
 from .policy_registry import PolicyRegistry
@@ -49,6 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_local.add_argument("--model", default="gpt-5.5")
     run_local.add_argument("--parallel", type=int, default=4)
     run_local.add_argument("--backend", default="openai", help="translation backend: openai, codex, auto, or dry-run")
+    run_local.add_argument("--glossary-strictness", default="high", choices=["low", "medium", "high", "strict"])
+    run_local.add_argument("--glossary-updates", default="safe", choices=["off", "safe", "review", "unsafe"])
     run_local.add_argument("--dry-run", action="store_true")
     _add_rights_confirmation_args(run_local)
     run_local.set_defaults(handler=run_local_command)
@@ -63,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_url.add_argument("--model", default="gpt-5.5")
     run_url.add_argument("--parallel", type=int, default=4)
     run_url.add_argument("--backend", default="openai", help="translation backend: openai, codex, auto, or dry-run")
+    run_url.add_argument("--glossary-strictness", default="high", choices=["low", "medium", "high", "strict"])
+    run_url.add_argument("--glossary-updates", default="safe", choices=["off", "safe", "review", "unsafe"])
     run_url.add_argument("--dry-run", action="store_true")
     run_url.add_argument("--allow-auto-fetch", action="store_true")
     run_url.add_argument("--permission-note", default="", help="rights/API/permission note for policy audit")
@@ -113,6 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_auth_parser(subparsers)
     _add_policy_parser(subparsers)
+    _add_glossary_parser(subparsers)
 
     doctor = subparsers.add_parser("doctor", help="check NovelTrans runtime configuration")
     doctor.add_argument("--config-dir", default="")
@@ -184,6 +190,40 @@ def _add_policy_parser(subparsers) -> None:
     policy.set_defaults(handler=policy_command)
 
 
+def _add_glossary_parser(subparsers) -> None:
+    glossary = subparsers.add_parser("glossary", help="inspect and review project glossary terms")
+    glossary_subparsers = glossary.add_subparsers(dest="glossary_command", metavar="glossary-command", required=True)
+
+    list_parser = glossary_subparsers.add_parser("list", help="list glossary entries")
+    list_parser.add_argument("--project", required=True, help="project slug or project path")
+    list_parser.add_argument("--base-dir", default="projects")
+    list_parser.add_argument("--all", action="store_true", help="include forbidden/deprecated entries")
+
+    review_parser = glossary_subparsers.add_parser("review", help="list terms needing review")
+    review_parser.add_argument("--project", required=True, help="project slug or project path")
+    review_parser.add_argument("--base-dir", default="projects")
+
+    lock_parser = glossary_subparsers.add_parser("lock", help="lock an existing glossary term")
+    lock_parser.add_argument("--project", required=True, help="project slug or project path")
+    lock_parser.add_argument("--base-dir", default="projects")
+    lock_parser.add_argument("--source", required=True)
+
+    forbid_parser = glossary_subparsers.add_parser("forbid", help="record a forbidden target for a source term")
+    forbid_parser.add_argument("--project", required=True, help="project slug or project path")
+    forbid_parser.add_argument("--base-dir", default="projects")
+    forbid_parser.add_argument("--source", required=True)
+    forbid_parser.add_argument("--target", required=True)
+
+    resolve_parser = glossary_subparsers.add_parser("resolve", help="resolve a glossary conflict or set a user target")
+    resolve_parser.add_argument("--project", required=True, help="project slug or project path")
+    resolve_parser.add_argument("--base-dir", default="projects")
+    resolve_parser.add_argument("--source", required=True)
+    resolve_parser.add_argument("--use", required=True, help="target translation to accept")
+    resolve_parser.add_argument("--lock", action="store_true")
+
+    glossary.set_defaults(handler=glossary_command)
+
+
 def _wizard_command(args: argparse.Namespace) -> int:
     from .wizard import wizard_main
 
@@ -195,7 +235,12 @@ def run_local_command(args: argparse.Namespace) -> int:
     _assert_usage_confirmed(args.confirm_rights, args.no_redistribute)
     config = AppConfig(base_dir=args.base_dir, default_model=args.model, default_parallel_episodes=args.parallel)
     backend = normalize_translation_backend(args.backend)
-    translation = TranslationOptions(model=args.model, backend=backend)
+    translation = TranslationOptions(
+        model=args.model,
+        backend=backend,
+        glossary_strictness=args.glossary_strictness,
+        glossary_updates=args.glossary_updates,
+    )
     parallel = ParallelOptions(max_parallel_episodes=args.parallel)
     quality = QualityOptions()
     export = ExportOptions(formats=_parse_formats(args.formats))
@@ -221,7 +266,12 @@ def run_url_command(args: argparse.Namespace) -> int:
     _assert_usage_confirmed(args.confirm_rights, args.no_redistribute)
     config = AppConfig(base_dir=args.base_dir, default_model=args.model, default_parallel_episodes=args.parallel)
     backend = normalize_translation_backend(args.backend)
-    translation = TranslationOptions(model=args.model, backend=backend)
+    translation = TranslationOptions(
+        model=args.model,
+        backend=backend,
+        glossary_strictness=args.glossary_strictness,
+        glossary_updates=args.glossary_updates,
+    )
     parallel = ParallelOptions(max_parallel_episodes=args.parallel)
     quality = QualityOptions()
     export = ExportOptions(formats=_parse_formats(args.formats))
@@ -426,6 +476,50 @@ def policy_command(args: argparse.Namespace) -> int:
     return 1
 
 
+def glossary_command(args: argparse.Namespace) -> int:
+    project = ProjectManager(args.base_dir).get_project(args.project)
+    glossary = GlossaryManager(project.glossary_dir)
+    if args.glossary_command == "list":
+        for entry in glossary.snapshot(limit=10_000, include_inactive=args.all):
+            target = entry.target or "(candidate)"
+            print(
+                f"{entry.source}\t{target}\tstatus={entry.status}\ttype={entry.type}"
+                f"\tsource_score={entry.source_score:.2f}\tconfidence={entry.confidence:.2f}"
+            )
+        return 0
+    if args.glossary_command == "review":
+        pending = glossary.pending_entries(limit=10_000)
+        conflicts = glossary.conflict_snapshot(limit=10_000)
+        for entry in pending:
+            reason = "review" if is_pending_entry(entry) else "candidate"
+            print(
+                f"{entry.source}\t{entry.target or '(no target)'}\tstatus={entry.status}"
+                f"\ttype={entry.type}\tsource_score={entry.source_score:.2f}\treason={reason}"
+            )
+        for conflict in conflicts:
+            print(
+                f"conflict\t{conflict.source}\tprevious={conflict.previous}"
+                f"\tsuggested={conflict.suggested}\trecommendation={conflict.recommendation}"
+            )
+        return 0
+    if args.glossary_command == "lock":
+        ok = glossary.lock_term(args.source)
+        _sync_glossary_cli_to_db(project, glossary)
+        print(f"locked={str(ok).lower()}")
+        return 0 if ok else 1
+    if args.glossary_command == "forbid":
+        ok = glossary.forbid_target(args.source, args.target)
+        _sync_glossary_cli_to_db(project, glossary)
+        print(f"forbidden={str(ok).lower()}")
+        return 0 if ok else 1
+    if args.glossary_command == "resolve":
+        ok = glossary.set_user_target(args.source, args.use, lock=args.lock)
+        _sync_glossary_cli_to_db(project, glossary)
+        print(f"resolved={str(ok).lower()}")
+        return 0 if ok else 1
+    return 1
+
+
 def doctor_command(args: argparse.Namespace) -> int:
     config_manager = ConfigManager(Path(args.config_dir).expanduser() if args.config_dir else None)
     config = config_manager.load()
@@ -483,6 +577,38 @@ def doctor_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sync_glossary_cli_to_db(project, glossary: GlossaryManager) -> None:
+    from dataclasses import asdict
+
+    for entry in glossary.snapshot(limit=10_000, include_inactive=True):
+        project.db.upsert_glossary_entry(
+            entry.source,
+            entry.target,
+            entry.type,
+            entry.confidence,
+            entry.locked,
+            reading=entry.reading,
+            status=entry.status,
+            aliases=entry.aliases,
+            variants=entry.variants,
+            forbidden_targets=entry.forbidden_targets,
+            notes=entry.notes,
+            source_score=entry.source_score,
+            target_score=entry.target_score,
+            occurrence_count=entry.occurrence_count,
+            episode_count=entry.episode_count,
+            first_seen_episode=entry.first_seen_episode,
+            last_seen_episode=entry.last_seen_episode,
+            origin=entry.origin,
+            priority=entry.priority,
+            evidence=[asdict(item) for item in entry.evidence],
+            episode_start=entry.episode_start,
+            episode_end=entry.episode_end,
+            speaker=entry.speaker,
+            matching_policy=entry.matching_policy,
+        )
+
+
 def _add_rights_confirmation_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--confirm-rights",
@@ -505,7 +631,7 @@ def _assert_usage_confirmed(confirm_rights: bool, no_redistribute: bool) -> None
 
 
 def _parse_formats(value: str) -> list[str]:
-    return [item.strip() for item in value.split(",") if item.strip()]
+    return normalize_export_formats([item.strip() for item in value.split(",") if item.strip()])
 
 
 def _policy_registry_for_config_dir(config_dir: str) -> PolicyRegistry:
