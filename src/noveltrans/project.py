@@ -129,10 +129,10 @@ class ProjectManager:
             return []
         projects = [
             Project(path)
-            for path in sorted(self.base_dir.iterdir())
+            for path in self.base_dir.iterdir()
             if (path / CANONICAL_MANIFEST_NAME).exists() or (path / LEGACY_MANIFEST_NAME).exists()
         ]
-        return projects
+        return sorted(projects, key=_project_sort_key)
 
     def create_project(
         self,
@@ -181,6 +181,27 @@ class ProjectManager:
 def _filter_dataclass_fields(cls: type, data: dict[str, Any]) -> dict[str, Any]:
     names = {field.name for field in fields(cls)}
     return {key: value for key, value in data.items() if key in names}
+
+
+def _project_sort_key(project: Project) -> tuple[float, str]:
+    try:
+        manifest = project.load_manifest()
+        timestamp = _iso_timestamp_value(manifest.updated_at or manifest.created_at)
+    except Exception:
+        manifest_path = project.existing_manifest_path()
+        timestamp = manifest_path.stat().st_mtime if manifest_path else project.root.stat().st_mtime
+    return (-timestamp, project.root.name)
+
+
+def _iso_timestamp_value(value: str) -> float:
+    from datetime import datetime
+
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def manifest_from_dict(data: dict[str, Any]) -> ProjectManifest:

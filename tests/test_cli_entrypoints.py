@@ -89,6 +89,8 @@ class CLIEntrypointTests(unittest.TestCase):
             )
         )
 
+        self.assertEqual(draft.name, "")
+        self.assertFalse(draft.name_confirmed)
         self.assertEqual(draft.translation.model, "custom-model")
         self.assertEqual(draft.translation.backend, "codex")
         self.assertEqual(draft.translation.preset, "literal")
@@ -166,13 +168,14 @@ class CLIEntrypointTests(unittest.TestCase):
             source.write_text("# 第1話\n本文。", encoding="utf-8")
             fake_project = object()
             with (
-                patch("builtins.input", side_effect=["", str(source), "", ""]),
+                patch("builtins.input", side_effect=["Demo Project", "", str(source), "", ""]),
                 patch("noveltrans.wizard.create_project_from_local_file", return_value=fake_project) as create_project,
                 patch("noveltrans.wizard._run_project_translation") as run_translation,
             ):
                 _new_project_wizard(prompt, ProjectManager(root / "projects"), config)
 
         create_project.assert_called_once()
+        self.assertEqual(create_project.call_args.kwargs["name"], "Demo Project")
         self.assertIn("progress_callback", create_project.call_args.kwargs)
         run_translation.assert_called_once_with(prompt, fake_project, "openai", resume=False, confirm_start=True)
 

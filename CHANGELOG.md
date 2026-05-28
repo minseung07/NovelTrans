@@ -2,6 +2,13 @@
 
 All notable changes to NovelTrans CLI will be documented in this file.
 
+## [1.0.11] - 2026-05-28
+
+### Changed
+
+- Recent projects are now sorted by manifest `updated_at` with newest work first.
+- New translation projects now ask for the project title before source input instead of defaulting to `my_novel`.
+
 ## [1.0.10] - 2026-05-28
 
 ### Added

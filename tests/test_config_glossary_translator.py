@@ -241,6 +241,37 @@ class ConfigGlossaryTranslatorTests(unittest.TestCase):
             )
             self.assertEqual(project.load_manifest().export.formats, ["txt"])
 
+    def test_project_list_is_sorted_by_recent_manifest_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manager = ProjectManager(root / "projects")
+            old_project = manager.create_project(
+                name="old",
+                work=WorkMetadata(title="Old", source_url="old.txt", license_note="user_provided"),
+                translation=TranslationOptions(),
+                parallel=ParallelOptions(),
+                quality=QualityOptions(),
+                export=ExportOptions(formats=["txt"]),
+                source_policy=None,
+            )
+            new_project = manager.create_project(
+                name="new",
+                work=WorkMetadata(title="New", source_url="new.txt", license_note="user_provided"),
+                translation=TranslationOptions(),
+                parallel=ParallelOptions(),
+                quality=QualityOptions(),
+                export=ExportOptions(formats=["txt"]),
+                source_policy=None,
+            )
+            old_payload = json.loads(old_project.manifest_path.read_text(encoding="utf-8"))
+            new_payload = json.loads(new_project.manifest_path.read_text(encoding="utf-8"))
+            old_payload["updated_at"] = "2026-05-28T01:00:00+00:00"
+            new_payload["updated_at"] = "2026-05-28T02:00:00+00:00"
+            old_project.manifest_path.write_text(json.dumps(old_payload, ensure_ascii=False), encoding="utf-8")
+            new_project.manifest_path.write_text(json.dumps(new_payload, ensure_ascii=False), encoding="utf-8")
+
+            self.assertEqual([item.root.name for item in manager.list_projects()], ["new", "old"])
+
     def test_doctor_reports_runtime_configuration(self) -> None:
         class EmptyStore:
             def __init__(self, config_dir=None) -> None:

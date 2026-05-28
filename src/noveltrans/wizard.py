@@ -59,6 +59,7 @@ class BackRequested(Exception):
 @dataclass(slots=True)
 class NewProjectDraft:
     name: str
+    name_confirmed: bool
     source_mode: str
     url: str
     input_path: Path | None
@@ -680,7 +681,7 @@ def wizard_main() -> int:
         try:
             projects = manager.list_projects()
             choices = [
-                Choice("새 원문 번역", "new", "원문을 넣고 바로 번역 준비"),
+                Choice("새 원문 번역", "new", "프로젝트 제목과 원문을 넣고 바로 번역 준비"),
             ]
             if projects:
                 choices.append(Choice("이어서 번역", "project", "미완료/실패 화 이어서 처리"))
@@ -774,6 +775,8 @@ def _new_project_wizard(prompt: TerminalPrompt, manager: ProjectManager, config:
     draft = _new_project_draft_from_config(config)
     while True:
         try:
+            if not draft.name_confirmed and not _collect_initial_project_name(prompt, draft):
+                return
             if not _draft_has_source(draft) and not _collect_initial_project_source(prompt, draft, config):
                 return
             action = prompt.select(
@@ -803,6 +806,23 @@ def _new_project_wizard(prompt: TerminalPrompt, manager: ProjectManager, config:
                 return
         except BackRequested:
             continue
+
+
+def _collect_initial_project_name(prompt: TerminalPrompt, draft: NewProjectDraft) -> bool:
+    try:
+        draft.name = prompt.input(
+            "프로젝트 제목",
+            draft.name,
+            required=True,
+            body=[
+                "작품명이나 관리하기 쉬운 이름을 입력하세요.",
+                "이 값은 프로젝트 폴더 이름의 기준으로도 쓰입니다.",
+            ],
+        )
+    except BackRequested:
+        return False
+    draft.name_confirmed = True
+    return True
 
 
 def _draft_has_source(draft: NewProjectDraft) -> bool:
@@ -958,7 +978,8 @@ def _customize_new_project_quality(prompt: TerminalPrompt, draft: NewProjectDraf
 
 def _new_project_draft_from_config(config: AppConfig) -> NewProjectDraft:
     return NewProjectDraft(
-        name="my_novel",
+        name="",
+        name_confirmed=False,
         source_mode=config.default_source_mode,
         url="",
         input_path=None,
