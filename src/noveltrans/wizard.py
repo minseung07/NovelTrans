@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import shlex
 import subprocess
@@ -11,7 +12,7 @@ import tempfile
 import textwrap
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from threading import Thread
+from threading import Lock, Thread
 from time import monotonic
 from typing import Callable, Iterable
 
@@ -20,10 +21,10 @@ from .config import AppConfig, ConfigManager, CredentialStore
 from .connectors import detect_connector
 from .errors import NovelTransError, PolicyViolation
 from .exporters import Exporter
-from .glossary import GlossaryManager, is_confirmed_entry, is_pending_entry, normalize_source
+from .glossary import GlossaryManager, is_confirmed_entry, is_pending_entry, normalize_source, normalize_status
 from .models import ExportOptions, GlossaryEntry, ParallelOptions, QualityOptions, TranslationOptions
 from .policy import SAFE_POLICY_TEXT, PolicyEngine
-from .progress import format_progress_lines, snapshot_project_progress, target_episode_numbers
+from .progress import ProgressCallback, WorkflowEvent, format_progress_lines, snapshot_project_progress, target_episode_numbers
 from .project import Project, ProjectManager
 from .status import format_episode_numbers, project_status
 from .translator import CodexCLI, normalize_translation_backend
@@ -411,6 +412,151 @@ class TerminalPrompt:
         print()
 
 
+class LiveScreenRenderer:
+    """Small fixed-block terminal renderer used for long-running steps."""
+
+    def __init__(self, prompt: TerminalPrompt, title: str, detail: str = "", min_interval: float = 1.5) -> None:
+        self.prompt = prompt
+        self.title = title
+        self.detail = detail
+        self.min_interval = min_interval
+        self._line_count = 0
+        self._last_signature: object = None
+        self._last_rendered_at = 0.0
+
+    def render(
+        self,
+        panels: list[tuple[str, str | Iterable[str]]],
+        *,
+        signature: object | None = None,
+        force: bool = False,
+    ) -> None:
+        now = monotonic()
+        if not force and signature == self._last_signature and now - self._last_rendered_at < self.min_interval:
+            return
+        lines = self._lines(panels)
+        if self.prompt.interactive:
+            self._render_interactive(lines)
+        elif force or signature != self._last_signature:
+            print()
+            print("\n".join(_strip_ansi(line) for line in lines))
+        self._line_count = len(lines)
+        self._last_signature = signature
+        self._last_rendered_at = now
+
+    def _lines(self, panels: list[tuple[str, str | Iterable[str]]]) -> list[str]:
+        width = self.prompt._width()
+        lines = [
+            f"{self.prompt._bold('NovelTrans')} {self.prompt._muted(__version__)}  "
+            f"{self.prompt._muted('권한 확인 번역 작업 공간')}",
+            self.prompt._muted("─" * width),
+            f"{self.prompt._accent('▸')} {self.prompt._bold(self.title)}",
+        ]
+        if self.detail:
+            lines.append(f"  {self.prompt._muted(self.detail)}")
+        lines.append("")
+        for title, body in panels:
+            lines.append(f"  {self.prompt._muted('╭─')} {self.prompt._bold(title)}")
+            for line in self.prompt._format_body(body):
+                lines.append(f"  {self.prompt._muted('│')} {line}")
+            lines.append(f"  {self.prompt._muted('╰')}")
+            lines.append("")
+        return lines
+
+    def _render_interactive(self, lines: list[str]) -> None:
+        if self._line_count == 0:
+            self.prompt.clear()
+        else:
+            print(f"\033[{self._line_count}F", end="")
+        line_total = max(self._line_count, len(lines))
+        for index in range(line_total):
+            print("\033[2K", end="")
+            print(lines[index] if index < len(lines) else "")
+
+
+class PreparationStatusRenderer:
+    def __init__(self, prompt: TerminalPrompt, title: str = "원문 준비 중") -> None:
+        self.started_at = monotonic()
+        self.screen = LiveScreenRenderer(prompt, title, "원문 확인과 프로젝트 생성을 진행합니다.", min_interval=0.2)
+        self.latest: WorkflowEvent | None = None
+
+    def callback(self, event: WorkflowEvent) -> None:
+        self.latest = event
+        self.render(force=event.stage in {"policy", "ready", "project"})
+
+    def render(self, force: bool = False) -> None:
+        event = self.latest or WorkflowEvent("prepare", "준비 중")
+        elapsed = int(monotonic() - self.started_at)
+        lines = [
+            f"단계: {_workflow_stage_label(event.stage)}",
+            f"상태: {event.message}",
+            f"경과: {elapsed // 60:02d}:{elapsed % 60:02d}",
+        ]
+        if event.total:
+            lines.append(f"진행: {event.current}/{event.total}")
+        if event.episode_no:
+            lines.append(f"현재 화: {event.episode_no}")
+        self.screen.render(
+            [("준비 상태", lines)],
+            signature=(event.stage, event.message, event.current, event.total, event.episode_no, elapsed // 2),
+            force=force,
+        )
+
+
+class TranslationProgressRenderer:
+    def __init__(self, prompt: TerminalPrompt, project: Project, target_numbers: list[int], backend: str, started_at: float) -> None:
+        self.prompt = prompt
+        self.project = project
+        self.target_numbers = target_numbers
+        self.backend = backend
+        self.started_at = started_at
+        self.screen = LiveScreenRenderer(prompt, "번역 진행 중", "상태가 바뀌거나 일정 시간이 지나면 갱신합니다.", min_interval=1.5)
+
+    def render(self, event: WorkflowEvent | None = None, force: bool = False) -> None:
+        snapshot = snapshot_project_progress(self.project, self.target_numbers, self.started_at)
+        stage_lines = []
+        if event:
+            stage_lines = [f"단계: {_workflow_stage_label(event.stage)}", f"상태: {event.message}"]
+            if event.total:
+                stage_lines.append(f"단계 진행: {event.current}/{event.total}")
+        panels: list[tuple[str, str | Iterable[str]]] = [
+            ("작업 상태", [*stage_lines, *format_progress_lines(snapshot, backend=_backend_label(self.backend))]),
+            ("프로젝트", str(self.project.root)),
+        ]
+        signature = (
+            tuple(snapshot.pending),
+            tuple(snapshot.running),
+            tuple(snapshot.completed),
+            tuple(snapshot.failed),
+            event.stage if event else "",
+            event.message if event else "",
+            int(snapshot.elapsed_seconds // 2),
+        )
+        self.screen.render(panels, signature=signature, force=force)
+
+
+def _strip_ansi(value: str) -> str:
+    return re.sub(r"\033\[[0-9;]*m", "", value)
+
+
+def _workflow_stage_label(stage: str) -> str:
+    labels = {
+        "policy": "정책 확인",
+        "metadata": "메타데이터",
+        "source": "원문 분석",
+        "fetch": "원문 가져오기",
+        "project": "프로젝트 생성",
+        "ready": "준비 완료",
+        "estimate": "예상 계산",
+        "translator": "백엔드 준비",
+        "translate": "번역",
+        "export": "내보내기",
+        "done": "완료",
+        "prepare": "준비",
+    }
+    return labels.get(stage, stage or "준비")
+
+
 def _backend_label(value: str | None) -> str:
     labels = {
         "auto": "자동 선택",
@@ -650,8 +796,10 @@ def _new_project_wizard(prompt: TerminalPrompt, manager: ProjectManager, config:
             elif action == "start":
                 if not _confirm_new_project_rights(prompt, draft):
                     continue
-                project = _create_project_from_draft(manager, draft)
-                _run_project_translation(prompt, project, draft.translation.backend, resume=False, confirm_start=False)
+                preparation = PreparationStatusRenderer(prompt)
+                project = _create_project_from_draft(manager, draft, progress_callback=preparation.callback)
+                preparation.render(force=True)
+                _run_project_translation(prompt, project, draft.translation.backend, resume=False, confirm_start=True)
                 return
         except BackRequested:
             continue
@@ -1070,7 +1218,11 @@ def _confirm_new_project_rights(prompt: TerminalPrompt, draft: NewProjectDraft) 
     return prompt.confirm("권한과 재배포 금지를 확인하고 시작할까요", default=True, body=body)
 
 
-def _create_project_from_draft(manager: ProjectManager, draft: NewProjectDraft) -> Project:
+def _create_project_from_draft(
+    manager: ProjectManager,
+    draft: NewProjectDraft,
+    progress_callback: ProgressCallback | None = None,
+) -> Project:
     if draft.source_mode == "url":
         return create_project_from_url(
             manager=manager,
@@ -1084,6 +1236,7 @@ def _create_project_from_draft(manager: ProjectManager, draft: NewProjectDraft) 
             user_permission=draft.allow_auto_fetch,
             permission_evidence=draft.permission_note,
             fallback_file=draft.fallback_file,
+            progress_callback=progress_callback,
         )
     if draft.input_path is None:
         raise NovelTransError("원본 파일이 선택되지 않았습니다.")
@@ -1096,6 +1249,7 @@ def _create_project_from_draft(manager: ProjectManager, draft: NewProjectDraft) 
         quality=draft.quality,
         export=draft.export,
         episode_spec=draft.episode_spec,
+        progress_callback=progress_callback,
     )
 
 
@@ -1176,12 +1330,15 @@ def _add_source_to_project_wizard(prompt: TerminalPrompt, project: Project) -> N
     input_path = _source_file_from_mode(prompt, source_mode)
     episode_spec = _choose_episode_spec_wizard(prompt, "가져올 화수 범위")
     replace_existing = prompt.confirm("기존 화 번호도 새 원문으로 교체할까요", default=False)
+    preparation = PreparationStatusRenderer(prompt, "원문 추가 중")
     imported = add_source_episodes_from_local_file(
         project=project,
         input_path=input_path,
         episode_spec=episode_spec,
         replace_existing=replace_existing,
+        progress_callback=preparation.callback,
     )
+    preparation.render(force=True)
     prompt.result("원문 가져오기 완료", ["가져온 화: " + (", ".join(str(number) for number in imported) if imported else "없음")])
 
 
@@ -1390,37 +1547,107 @@ def _edit_settings_category(prompt: TerminalPrompt, config: AppConfig, store: Cr
             ],
         )
     elif action == "advanced":
-        _settings_category_wizard(
-            prompt,
-            config,
-            store,
+        _settings_advanced_wizard(prompt, config, store)
+
+
+def _settings_advanced_wizard(prompt: TerminalPrompt, config: AppConfig, store: CredentialStore) -> None:
+    while True:
+        action = prompt.select(
             "고급 설정",
             [
-                Choice("추론 강도", "reasoning", _reasoning_label(config.default_reasoning_effort)),
-                Choice("문체", "style", _style_label(config.default_style)),
-                Choice("존댓말/호칭", "honorific", _honorific_label(config.default_honorific_policy)),
-                Choice("용어집 엄격도", "glossary", _glossary_strictness_label(config.default_glossary_strictness)),
-                Choice("용어집 자동 반영", "glossary_updates", _glossary_updates_label(config.default_glossary_updates)),
-                Choice("문장 변형 정도", "temperature", str(config.default_temperature)),
-                Choice("일본어 호칭 접미사 보존", "suffixes", _enabled_label(config.default_preserve_japanese_suffixes)),
-                Choice("작가 후기 번역", "translate_notes", _enabled_label(config.default_translate_author_notes)),
-                Choice("루비 괄호 보존", "ruby", _enabled_label(config.default_keep_ruby_as_parentheses)),
-                Choice("긴 화 분할", "split", _enabled_label(config.default_split_long_episode)),
-                Choice("긴 화 기준 글자 수", "threshold", f"{config.default_long_episode_threshold_chars}자"),
-                Choice("번역 품질 검사", "qa", _enabled_label(config.default_run_qa_pass)),
-                Choice("이름/용어 흔들림 검사", "term", _enabled_label(config.default_run_term_consistency_pass)),
-                Choice("누락 문단 검사", "missing", _enabled_label(config.default_check_missing_paragraphs)),
-                Choice("길이 비율 검사", "ratio", _enabled_label(config.default_compare_length_ratio)),
-                Choice("금칙어", "banned", f"{len(config.default_banned_terms)}개"),
-                Choice("저장 위치", "base_dir", config.base_dir),
-                Choice("토큰 단가", "pricing", "비용 추정에 사용"),
+                Choice("번역 세부", "translation", "추론, 문체, 호칭, temperature"),
+                Choice("용어집", "glossary", "엄격도와 자동 반영 정책"),
+                Choice("QA/검토", "quality", "누락, 길이, 금칙어, 긴 화 분할"),
+                Choice("저장/비용", "storage", "프로젝트 위치와 토큰 단가"),
+                Choice("설정으로 돌아가기", "back"),
             ],
-            lambda: [
-                f"모델 세부값: 추론 {_reasoning_label(config.default_reasoning_effort)}, 문장 변형 {config.default_temperature}",
+            default="back",
+            body=[
+                f"번역: 추론 {_reasoning_label(config.default_reasoning_effort)}, 문장 변형 {config.default_temperature}",
+                f"용어집: {_glossary_strictness_label(config.default_glossary_strictness)} / {_glossary_updates_label(config.default_glossary_updates)}",
                 f"검토: 품질 {_enabled_label(config.default_run_qa_pass)}, 용어 {_enabled_label(config.default_run_term_consistency_pass)}",
                 f"저장 위치: {config.base_dir}",
             ],
         )
+        if action == "back":
+            return
+        if action == "translation":
+            _settings_category_wizard(
+                prompt,
+                config,
+                store,
+                "번역 세부",
+                [
+                    Choice("추론 강도", "reasoning", _reasoning_label(config.default_reasoning_effort)),
+                    Choice("문체", "style", _style_label(config.default_style)),
+                    Choice("존댓말/호칭", "honorific", _honorific_label(config.default_honorific_policy)),
+                    Choice("문장 변형 정도", "temperature", str(config.default_temperature)),
+                    Choice("일본어 호칭 접미사 보존", "suffixes", _enabled_label(config.default_preserve_japanese_suffixes)),
+                    Choice("작가 후기 번역", "translate_notes", _enabled_label(config.default_translate_author_notes)),
+                    Choice("루비 괄호 보존", "ruby", _enabled_label(config.default_keep_ruby_as_parentheses)),
+                ],
+                lambda: [
+                    f"추론: {_reasoning_label(config.default_reasoning_effort)}",
+                    f"문체: {_style_label(config.default_style)}",
+                    f"호칭: {_honorific_label(config.default_honorific_policy)}",
+                ],
+                back_label="고급 설정으로",
+            )
+        elif action == "glossary":
+            _settings_category_wizard(
+                prompt,
+                config,
+                store,
+                "용어집",
+                [
+                    Choice("용어집 엄격도", "glossary", _glossary_strictness_label(config.default_glossary_strictness)),
+                    Choice("용어집 자동 반영", "glossary_updates", _glossary_updates_label(config.default_glossary_updates)),
+                ],
+                lambda: [
+                    f"엄격도: {_glossary_strictness_label(config.default_glossary_strictness)}",
+                    f"자동 반영: {_glossary_updates_label(config.default_glossary_updates)}",
+                ],
+                back_label="고급 설정으로",
+            )
+        elif action == "quality":
+            _settings_category_wizard(
+                prompt,
+                config,
+                store,
+                "QA/검토",
+                [
+                    Choice("긴 화 분할", "split", _enabled_label(config.default_split_long_episode)),
+                    Choice("긴 화 기준 글자 수", "threshold", f"{config.default_long_episode_threshold_chars}자"),
+                    Choice("번역 품질 검사", "qa", _enabled_label(config.default_run_qa_pass)),
+                    Choice("이름/용어 흔들림 검사", "term", _enabled_label(config.default_run_term_consistency_pass)),
+                    Choice("누락 문단 검사", "missing", _enabled_label(config.default_check_missing_paragraphs)),
+                    Choice("길이 비율 검사", "ratio", _enabled_label(config.default_compare_length_ratio)),
+                    Choice("금칙어", "banned", f"{len(config.default_banned_terms)}개"),
+                ],
+                lambda: [
+                    f"품질 검사: {_enabled_label(config.default_run_qa_pass)}",
+                    f"용어 검사: {_enabled_label(config.default_run_term_consistency_pass)}",
+                    f"금칙어: {len(config.default_banned_terms)}개",
+                ],
+                back_label="고급 설정으로",
+            )
+        elif action == "storage":
+            _settings_category_wizard(
+                prompt,
+                config,
+                store,
+                "저장/비용",
+                [
+                    Choice("저장 위치", "base_dir", config.base_dir),
+                    Choice("토큰 단가", "pricing", "비용 추정에 사용"),
+                ],
+                lambda: [
+                    f"프로젝트 저장 위치: {config.base_dir}",
+                    f"입력 단가/100만: {config.input_price_per_million_tokens}",
+                    f"출력 단가/100만: {config.output_price_per_million_tokens}",
+                ],
+                back_label="고급 설정으로",
+            )
 
 
 def _settings_category_wizard(
@@ -1430,11 +1657,12 @@ def _settings_category_wizard(
     title: str,
     choices: list[Choice],
     body: Callable[[], list[str]],
+    back_label: str = "설정으로 돌아가기",
 ) -> None:
     while True:
         action = prompt.select(
             title,
-            [*choices, Choice("설정으로 돌아가기", "back")],
+            [*choices, Choice(back_label, "back")],
             default="back",
             body=body(),
         )
@@ -2071,16 +2299,18 @@ def _run_project_translation(
             summary.insert(3, f"예상 비용: ${estimate.estimated_cost:.4f}")
         if not prompt.confirm("번역을 시작할까요", default=True, body=summary):
             return
+    effective_backend = "dry-run" if dry_run else selected_backend
     outputs = _run_translation_with_progress_wizard(
         prompt,
         project,
-        backend="dry-run" if dry_run else selected_backend,
+        backend=effective_backend,
         resume=resume,
-        runner=lambda: run_translation_and_export(
+        runner=lambda progress_callback: run_translation_and_export(
             project,
             dry_run=dry_run,
             resume=resume,
-            backend=selected_backend,
+            backend=effective_backend,
+            progress_callback=progress_callback,
         ),
     )
     prompt.result("완료", [f"프로젝트: {project.root}", "", *[f"출력: {output}" for output in outputs]])
@@ -2092,24 +2322,34 @@ def _run_translation_with_progress_wizard(
     project: Project,
     backend: str,
     resume: bool,
-    runner: Callable[[], list[Path]],
+    runner: Callable[[ProgressCallback], list[Path]],
 ) -> list[Path]:
     target_numbers = target_episode_numbers(project, resume=resume)
     started_at = monotonic()
     state: dict[str, object] = {}
+    state_lock = Lock()
+    renderer = TranslationProgressRenderer(prompt, project, target_numbers, backend, started_at)
+
+    def progress_callback(event: WorkflowEvent) -> None:
+        with state_lock:
+            state["event"] = event
 
     def worker() -> None:
         try:
-            state["outputs"] = runner()
+            state["outputs"] = runner(progress_callback)
         except Exception as exc:  # noqa: BLE001 - re-raised on the UI thread.
             state["error"] = exc
 
     thread = Thread(target=worker, daemon=True)
     thread.start()
     while thread.is_alive():
-        _render_progress_wizard(prompt, project, target_numbers, started_at, backend)
-        thread.join(timeout=1.0)
-    _render_progress_wizard(prompt, project, target_numbers, started_at, backend)
+        with state_lock:
+            event = state.get("event")
+        renderer.render(event if isinstance(event, WorkflowEvent) else None)
+        thread.join(timeout=0.5)
+    with state_lock:
+        event = state.get("event")
+    renderer.render(event if isinstance(event, WorkflowEvent) else None, force=True)
     if "error" in state:
         raise state["error"]  # type: ignore[misc]
     return list(state.get("outputs", []))
@@ -2122,11 +2362,7 @@ def _render_progress_wizard(
     started_at: float,
     backend: str,
 ) -> None:
-    snapshot = snapshot_project_progress(project, target_numbers, started_at)
-    prompt.clear()
-    prompt.banner("번역 진행 중", "대기/진행/완료 상태를 1초마다 갱신합니다.")
-    prompt.panel("작업 상태", format_progress_lines(snapshot, backend=_backend_label(backend)))
-    prompt.panel("프로젝트", str(project.root))
+    TranslationProgressRenderer(prompt, project, target_numbers, backend, started_at).render(force=True)
 
 
 def _should_use_dry_run(prompt: TerminalPrompt, backend: str) -> bool:
@@ -2236,16 +2472,40 @@ def _select_project_wizard(prompt: TerminalPrompt, manager: ProjectManager) -> P
     projects = manager.list_projects()
     if not projects:
         raise NovelTransError("프로젝트가 없습니다.")
-    choices: list[Choice] = []
-    for index, project in enumerate(projects):
-        try:
-            manifest = project.load_manifest()
-            label = manifest.name
-        except Exception:
-            label = project.root.name
-        choices.append(Choice(label, str(index), str(project.root)))
-    selected = int(prompt.select("프로젝트 선택", choices, default="0"))
-    return projects[selected]
+    query = ""
+    while True:
+        visible = [
+            (index, project)
+            for index, project in enumerate(projects)
+            if not query or query.lower() in _project_choice_label(project).lower() or query.lower() in str(project.root).lower()
+        ]
+        if not visible:
+            prompt.result("검색 결과 없음", [query], ok=False)
+            query = ""
+            continue
+        choices = [
+            Choice(_project_choice_label(project), str(index), str(project.root))
+            for index, project in visible[:20]
+        ]
+        if len(projects) > 8:
+            choices.append(Choice("검색/필터", "__filter__", query or "프로젝트 이름 또는 경로"))
+        selected = prompt.select(
+            "프로젝트 선택",
+            choices,
+            default=choices[0].value,
+            body=[f"전체 {len(projects)}개" + (f", 필터: {query}" if query else "")],
+        )
+        if selected == "__filter__":
+            query = prompt.input("프로젝트 검색어", query)
+            continue
+        return projects[int(selected)]
+
+
+def _project_choice_label(project: Project) -> str:
+    try:
+        return project.load_manifest().name
+    except Exception:
+        return project.root.name
 
 
 def _sync_glossary_to_project_db(project: Project, glossary: GlossaryManager) -> None:
@@ -2280,7 +2540,17 @@ def _sync_glossary_to_project_db(project: Project, glossary: GlossaryManager) ->
 
 def _glossary_snapshot_lines(glossary: GlossaryManager) -> list[str]:
     entries = glossary.snapshot(limit=20, include_inactive=True)
-    lines = ["최근 용어"]
+    all_entries = glossary.snapshot(limit=10_000, include_inactive=True)
+    conflicts = glossary.conflict_snapshot(limit=10_000)
+    confirmed_count = sum(1 for entry in all_entries if is_confirmed_entry(entry))
+    pending_count = sum(1 for entry in all_entries if is_pending_entry(entry))
+    locked_count = sum(1 for entry in all_entries if entry.locked or normalize_status(entry.status) == "locked")
+    lines = [
+        "요약",
+        f"- 확정 {confirmed_count}개, 검토 {pending_count}개, 잠금 {locked_count}개, 충돌 {len(conflicts)}개",
+        "",
+        "최근 용어",
+    ]
     if not entries:
         lines.append("(비어 있음)")
     for entry in entries:
@@ -2293,11 +2563,10 @@ def _glossary_snapshot_lines(glossary: GlossaryManager) -> list[str]:
             markers.append("금칙 " + str(len(entry.forbidden_targets)))
         suffix = ", " + ", ".join(markers) if markers else ""
         lines.append(f"- {entry.source} -> {target} [{entry.type}, {locked}, {entry.confidence:.2f}{suffix}]")
-    conflicts = glossary.conflict_snapshot(limit=5)
     if conflicts:
         lines.append("")
         lines.append("충돌")
-        for conflict in conflicts:
+        for conflict in conflicts[-5:]:
             lines.append(f"- {conflict.source}: {conflict.previous} / {conflict.suggested}")
     return lines
 

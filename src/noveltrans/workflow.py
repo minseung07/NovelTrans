@@ -25,6 +25,7 @@ from .models import (
 from .orchestrator import TranslationOrchestrator
 from .policy import PolicyEngine
 from .preprocessing import normalize_episode
+from .progress import ProgressCallback, WorkflowEvent
 from .project import Project, ProjectManager
 from .range_parser import parse_episode_range, parse_single_episode_number
 from .translator import CodexCLI, CodexTranslator, DryRunTranslator, OpenAITranslator, Translator
@@ -47,15 +48,21 @@ def create_project_from_local_file(
     quality: QualityOptions,
     export: ExportOptions,
     episode_spec: str = "all",
+    progress_callback: ProgressCallback | None = None,
 ) -> Project:
+    _emit(progress_callback, "policy", "로컬 파일 정책 확인 중")
     connector = detect_connector(str(input_path))
     engine = PolicyEngine()
     policy = engine.effective_policy(connector.get_policy())
     engine.assert_can_auto_fetch(policy, user_permission=True)
+    _emit(progress_callback, "metadata", "작품 메타데이터 확인 중")
     work = connector.get_work_metadata(str(input_path))
-    episodes = _load_user_file_episodes(input_path, translation, episode_spec)
+    episodes = _load_user_file_episodes(input_path, translation, episode_spec, progress_callback=progress_callback)
+    _emit(progress_callback, "project", "프로젝트 폴더와 DB 생성 중")
     project = manager.create_project(name, work, translation, parallel, quality, export, policy)
+    _emit(progress_callback, "source", "원문 화수 저장 중", total=len(episodes))
     _save_project_episodes(project, episodes)
+    _emit(progress_callback, "ready", "원문 준비 완료", current=len(episodes), total=len(episodes))
     return project
 
 
@@ -72,19 +79,24 @@ def create_project_from_url(
     user_permission: bool = False,
     permission_evidence: str = "",
     fallback_file: Path | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> Project:
+    _emit(progress_callback, "policy", "사이트 정책 확인 중")
     connector = detect_connector(url)
     engine = PolicyEngine()
     policy = engine.effective_policy(connector.get_policy())
+    _emit(progress_callback, "metadata", "작품 메타데이터 조회 중")
     work = connector.get_work_metadata(url)
     episodes: list[EpisodeText] = []
     if fallback_file:
+        _emit(progress_callback, "metadata", "URL 화수 정보 확인 중")
         episodes = _load_user_file_episodes(
             fallback_file,
             translation,
             episode_spec,
             single_episode_no=_requested_single_episode_no(connector, url, work)
             or _single_unmarked_episode_no_from_spec(episode_spec),
+            progress_callback=progress_callback,
         )
         work = WorkMetadata(
             title=work.title,
@@ -103,6 +115,7 @@ def create_project_from_url(
             permission_evidence=permission_evidence,
         )
         work = _work_with_permission_evidence(work, permission_evidence)
+        _emit(progress_callback, "metadata", "화수 목록 조회 중")
         metadata = connector.list_episodes(url)
         selected = set(parse_episode_range(episode_spec, [item.episode_no for item in metadata]))
         episodes = _fetch_selected_episodes(
@@ -111,6 +124,7 @@ def create_project_from_url(
             selected=selected,
             translation=translation,
             max_rps=policy.max_rps,
+            progress_callback=progress_callback,
         )
         _assert_translatable_episodes(episodes, url)
     else:
@@ -120,8 +134,11 @@ def create_project_from_url(
             f"사용자 제공 파일이 필요합니다. 가능 작업: {actions}"
         )
 
+    _emit(progress_callback, "project", "프로젝트 폴더와 DB 생성 중")
     project = manager.create_project(name, work, translation, parallel, quality, export, policy)
+    _emit(progress_callback, "source", "원문 화수 저장 중", total=len(episodes))
     _save_project_episodes(project, episodes)
+    _emit(progress_callback, "ready", "원문 준비 완료", current=len(episodes), total=len(episodes))
     return project
 
 
@@ -156,6 +173,7 @@ def add_source_episodes_from_local_file(
     input_path: Path,
     episode_spec: str = "all",
     replace_existing: bool = False,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[int]:
     """Import user-provided source episodes into an existing project.
 
@@ -164,7 +182,12 @@ def add_source_episodes_from_local_file(
     """
 
     manifest = project.load_manifest()
-    episodes = _load_user_file_episodes(input_path, manifest.translation, episode_spec)
+    episodes = _load_user_file_episodes(
+        input_path,
+        manifest.translation,
+        episode_spec,
+        progress_callback=progress_callback,
+    )
     existing_numbers = {episode.episode_no for episode in project.list_source_episodes()}
     work_id = project.db.upsert_work(
         manifest.work.title,
@@ -191,11 +214,25 @@ def _load_user_file_episodes(
     translation: TranslationOptions,
     episode_spec: str,
     single_episode_no: int | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[EpisodeText]:
+    _emit(progress_callback, "source", "원문 파일 분석 중")
     connector = detect_connector(str(input_path))
     metadata = connector.list_episodes(str(input_path))
-    loaded = [connector.fetch_episode(item) for item in metadata]
+    loaded: list[EpisodeText] = []
+    total = len(metadata)
+    for index, item in enumerate(metadata, start=1):
+        _emit(
+            progress_callback,
+            "source",
+            f"{getattr(item, 'episode_no', index)}화 읽는 중",
+            current=index,
+            total=total,
+            episode_no=getattr(item, "episode_no", None),
+        )
+        loaded.append(connector.fetch_episode(item))
     loaded = _remap_single_user_episode_if_unmarked(loaded, single_episode_no)
+    _emit(progress_callback, "source", "원문 정규화 중", total=len(loaded))
     loaded = [
         normalize_episode(episode, keep_ruby_as_parentheses=translation.keep_ruby_as_parentheses)
         for episode in loaded
@@ -214,14 +251,16 @@ def _fetch_selected_episodes(
     selected: set[int],
     translation: TranslationOptions,
     max_rps: float,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[EpisodeText]:
     episodes: list[EpisodeText] = []
+    selected_items = [item for item in metadata if getattr(item, "episode_no") in selected]
+    total = len(selected_items)
     delay = 1.0 / max_rps if max_rps > 0 else 0.0
     last_fetch_at = 0.0
-    for item in metadata:
+    for index, item in enumerate(selected_items, start=1):
         episode_no = getattr(item, "episode_no")
-        if episode_no not in selected:
-            continue
+        _emit(progress_callback, "fetch", f"{episode_no}화 가져오는 중", current=index, total=total, episode_no=episode_no)
         if delay and last_fetch_at:
             elapsed = time.monotonic() - last_fetch_at
             if elapsed < delay:
@@ -282,6 +321,7 @@ def run_translation_and_export(
     formats: list[str] | None = None,
     resume: bool = True,
     backend: str | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[Path]:
     manifest = project.load_manifest()
     translation_options = manifest.translation
@@ -290,9 +330,12 @@ def run_translation_and_export(
     elif dry_run:
         translation_options = replace(translation_options, backend="dry-run")
     requested_formats = normalize_export_formats(formats or manifest.export.formats)
+    _emit(progress_callback, "estimate", "번역 대상과 토큰 예상 계산 중")
     estimate = estimate_project_translation(project, resume=resume)
     if resume and estimate.episode_count == 0:
+        _emit(progress_callback, "export", "완료된 번역으로 결과 파일 생성 중")
         return Exporter().export(project, formats=requested_formats)
+    _emit(progress_callback, "translator", "번역 백엔드 준비 중")
     translator = translator or build_translator(translation_options, dry_run=dry_run)
     orchestrator = TranslationOrchestrator(
         project=project,
@@ -301,11 +344,27 @@ def run_translation_and_export(
         parallel_options=manifest.parallel,
         quality_options=manifest.quality,
     )
+    _emit(progress_callback, "translate", "화 단위 번역 진행 중", total=estimate.episode_count)
     orchestrator.run_sync(resume=resume)
     failed = project.db.counts_by_status().get("failed", 0)
     if failed:
         raise TranslationError(f"{failed}개 화 번역이 실패했습니다. 로그를 확인한 뒤 기존 프로젝트 이어서 번역을 실행하세요.")
-    return Exporter().export(project, formats=requested_formats)
+    _emit(progress_callback, "export", "결과 파일 생성 중")
+    outputs = Exporter().export(project, formats=requested_formats)
+    _emit(progress_callback, "done", "번역 작업 완료", current=len(outputs), total=len(outputs))
+    return outputs
+
+
+def _emit(
+    progress_callback: ProgressCallback | None,
+    stage: str,
+    message: str,
+    current: int = 0,
+    total: int = 0,
+    episode_no: int | None = None,
+) -> None:
+    if progress_callback:
+        progress_callback(WorkflowEvent(stage, message, current=current, total=total, episode_no=episode_no))
 
 
 def estimate_project_translation(project: Project, resume: bool = True) -> Estimate:

@@ -34,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="noveltrans",
         description="NovelTrans CLI",
+        epilog="명령 없이 `noveltrans`만 실행하면 인터랙티브 wizard가 시작됩니다.",
     )
     parser.add_argument("--version", action="store_true", help="print version and exit")
     subparsers = parser.add_subparsers(dest="command", metavar="command")

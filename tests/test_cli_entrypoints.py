@@ -31,6 +31,7 @@ class CLIEntrypointTests(unittest.TestCase):
         text = output.getvalue()
         for command in ("run-local", "run-url", "add-source", "export", "status", "estimate", "report", "verify", "auth", "policy", "glossary", "doctor"):
             self.assertIn(command, text)
+        self.assertIn("명령 없이", text)
 
     def test_subcommand_help_shows_command_options(self) -> None:
         from noveltrans.cli import main
@@ -172,7 +173,39 @@ class CLIEntrypointTests(unittest.TestCase):
                 _new_project_wizard(prompt, ProjectManager(root / "projects"), config)
 
         create_project.assert_called_once()
-        run_translation.assert_called_once_with(prompt, fake_project, "openai", resume=False, confirm_start=False)
+        self.assertIn("progress_callback", create_project.call_args.kwargs)
+        run_translation.assert_called_once_with(prompt, fake_project, "openai", resume=False, confirm_start=True)
+
+    def test_wizard_dry_run_fallback_is_used_for_translation_runner(self) -> None:
+        from noveltrans.models import ExportOptions, ParallelOptions, QualityOptions, TranslationOptions
+        from noveltrans.project import ProjectManager
+        from noveltrans.wizard import TerminalPrompt, _run_project_translation
+        from noveltrans.workflow import create_project_from_local_file
+
+        prompt = TerminalPrompt()
+        prompt.interactive = False
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.txt"
+            source.write_text("# 第1話\n本文。", encoding="utf-8")
+            project = create_project_from_local_file(
+                manager=ProjectManager(root / "projects"),
+                name="dry_fallback",
+                input_path=source,
+                translation=TranslationOptions(model="gpt-5.5", backend="openai"),
+                parallel=ParallelOptions(max_parallel_episodes=1),
+                quality=QualityOptions(),
+                export=ExportOptions(formats=["txt"]),
+            )
+            with (
+                patch("noveltrans.wizard._has_openai_credentials", return_value=False),
+                patch("noveltrans.wizard._has_codex_credentials", return_value=False),
+                patch("builtins.input", side_effect=["", ""]),
+            ):
+                _run_project_translation(prompt, project, "openai", resume=False, confirm_start=True)
+
+            translated = project.translation_path(1).read_text(encoding="utf-8")
+            self.assertIn("[DRY-RUN KO]", translated)
 
     def test_home_menu_hides_tools_under_tools_and_settings(self) -> None:
         from noveltrans.config import AppConfig
@@ -208,6 +241,21 @@ class CLIEntrypointTests(unittest.TestCase):
             [choice.label for choice in choices],
             ["인증", "번역 기본값", "출력 기본값", "안전/정책", "고급 설정", "저장하고 돌아가기"],
         )
+
+    def test_advanced_settings_are_split_into_smaller_groups(self) -> None:
+        from noveltrans.config import AppConfig, CredentialStore
+        from noveltrans.wizard import TerminalPrompt, _settings_advanced_wizard
+
+        prompt = TerminalPrompt()
+        prompt.interactive = False
+        with tempfile.TemporaryDirectory() as tmp:
+            output = StringIO()
+            with patch("builtins.input", side_effect=["5"]), redirect_stdout(output):
+                _settings_advanced_wizard(prompt, AppConfig(), CredentialStore(Path(tmp)))
+
+        text = output.getvalue()
+        for label in ("번역 세부", "용어집", "QA/검토", "저장/비용"):
+            self.assertIn(label, text)
 
     def test_settings_preset_updates_actual_translation_defaults(self) -> None:
         from noveltrans.config import AppConfig, CredentialStore

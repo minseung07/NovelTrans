@@ -2,6 +2,26 @@
 
 All notable changes to NovelTrans CLI will be documented in this file.
 
+## [1.0.10] - 2026-05-28
+
+### Added
+
+- Added workflow progress events for source preparation, project creation, translation setup, export, and completion.
+- Added a preparation status screen for new project creation and source import so long file parsing or URL setup is visible immediately after confirmation.
+
+### Changed
+
+- Replaced the translation progress screen's repeated full-screen redraw with a fixed-block renderer that refreshes on state changes or a slower cadence.
+- New translation runs now show the same token/cost estimate confirmation used by resume runs after the source project has been prepared.
+- Split advanced settings into translation, glossary, QA/review, and storage/cost groups.
+- Project selection now supports filtering when many projects are present.
+- Glossary management now shows summary counts for confirmed, review, locked, and conflicting terms.
+- Top-level CLI help now states that running `noveltrans` without a subcommand launches the wizard.
+
+### Fixed
+
+- Fixed wizard dry-run fallback so selecting a dry-run path cannot be overridden by the original backend argument.
+
 ## [1.0.9] - 2026-05-28
 
 ### Added

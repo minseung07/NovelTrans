@@ -130,6 +130,35 @@ class WorkflowExportTests(unittest.TestCase):
             self.assertEqual(completed.completed, [1, 2, 3])
             self.assertEqual(target_episode_numbers(project, resume=True), [])
 
+    def test_workflow_emits_preparation_and_translation_progress_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "events.txt"
+            source.write_text("# 第1話\n本文一。\n\n# 第2話\n本文二。", encoding="utf-8")
+            prepare_events = []
+            project = create_project_from_local_file(
+                manager=ProjectManager(root / "projects"),
+                name="events",
+                input_path=source,
+                translation=TranslationOptions(model="gpt-5.5"),
+                parallel=ParallelOptions(max_parallel_episodes=1),
+                quality=QualityOptions(),
+                export=ExportOptions(formats=["txt"]),
+                progress_callback=prepare_events.append,
+            )
+
+            self.assertIn("policy", [event.stage for event in prepare_events])
+            self.assertIn("source", [event.stage for event in prepare_events])
+            self.assertEqual(prepare_events[-1].stage, "ready")
+
+            run_events = []
+            run_translation_and_export(project, dry_run=True, resume=False, progress_callback=run_events.append)
+
+            self.assertIn("estimate", [event.stage for event in run_events])
+            self.assertIn("translate", [event.stage for event in run_events])
+            self.assertIn("export", [event.stage for event in run_events])
+            self.assertEqual(run_events[-1].stage, "done")
+
     def test_pending_auto_seeded_glossary_entries_are_not_exported_as_japanese_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

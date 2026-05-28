@@ -4,8 +4,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import monotonic
+from typing import Callable
 
 from .project import Project
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowEvent:
+    stage: str
+    message: str
+    current: int = 0
+    total: int = 0
+    episode_no: int | None = None
+
+
+ProgressCallback = Callable[[WorkflowEvent], None]
 
 
 @dataclass(frozen=True, slots=True)
