@@ -2,6 +2,13 @@
 
 All notable changes to NovelTrans will be documented in this file.
 
+## [2.0.1] - 2026-05-29
+
+### Fixed
+
+- Fixed GitHub npm installation by making the install-time TypeScript build use available package dependencies.
+- Split runtime build and test build configs so `prepare` does not compile test sources during GitHub installs.
+
 ## [2.0.0] - 2026-05-29
 
 Initial public release.
