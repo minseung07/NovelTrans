@@ -14,10 +14,11 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "build:test": "tsc -p tsconfig.json",
     "prepare": "npm run build",
     "test": "node --test dist/**/*.test.js",
-    "pretest": "npm run build",
+    "pretest": "npm run build:test",
     "smoke": "npm run build && node dist/index.js self-test --workspace tmp/self-test"
   },
   "keywords": [
@@ -28,7 +29,7 @@
   ],
   "author": "minseung07",
   "license": "MIT",
-  "devDependencies": {
+  "dependencies": {
     "@types/node": "^22.15.0",
     "typescript": "^5.8.3"
   },
