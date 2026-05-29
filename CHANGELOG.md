@@ -2,6 +2,12 @@
 
 All notable changes to NovelTrans will be documented in this file.
 
+## [2.0.2] - 2026-05-29
+
+### Fixed
+
+- Fixed GitHub npm installation in environments where TypeScript does not auto-discover Node.js type definitions by explicitly enabling Node types in `tsconfig.json`.
+
 ## [2.0.1] - 2026-05-29
 
 ### Fixed
