@@ -2,6 +2,13 @@
 
 All notable changes to NovelTrans will be documented in this file.
 
+## [2.0.3] - 2026-05-29
+
+### Changed
+
+- Removed the install-time `prepare` build for GitHub npm installs.
+- Committed runtime `dist/` output so `npm install -g github:minseung07/NovelTrans` does not depend on TypeScript or Node type resolution in the installer's temporary clone.
+
 ## [2.0.2] - 2026-05-29
 
 ### Fixed
