@@ -147,7 +147,7 @@ function buildChunkEpisode(episode: Episode, body: string, chunkNo: number, chun
   return {
     ...baseEpisode,
     id: `${episode.id}_chunk_${chunkNo}`,
-    title: `${episode.title} (${chunkNo}/${chunkCount})`,
+    title: episode.title,
     sourceText: body,
     body,
     sourceHash: hashText(body),

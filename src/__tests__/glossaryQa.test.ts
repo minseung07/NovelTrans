@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  addForbiddenTarget,
   confirmGlossaryTerm,
   addTargetCandidate,
   createEmptyGlossary,
@@ -107,6 +108,37 @@ test("detects name inconsistency when multiple glossary targets appear in one tr
   assert.match(nameIssue?.targetSnippet ?? "", /흑가/);
   const reviewDesk = buildReviewDeskModel(issues);
   assert.equal(reviewDesk.buckets.find((bucket) => bucket.id === "names")?.count, 1);
+});
+
+test("glossary QA ignores target variants when the source term is absent from the episode", () => {
+  let glossary = createEmptyGlossary();
+  glossary = confirmGlossaryTerm(glossary, "黒架", "흑가", false);
+  glossary = addTargetCandidate(glossary, "黒架", "쿠로카", "episode_other");
+  glossary = addForbiddenTarget(glossary, "黒架", "쿠로카");
+
+  const episode: Episode = {
+    id: "episode_001",
+    episodeNo: 1,
+    title: "第1話 聖印",
+    sourceText: "聖印は光った。",
+    body: "聖印は光った。",
+    sourceHash: "hash",
+    metadata: {}
+  };
+  const result: TranslationResult = {
+    episodeId: episode.id,
+    titleKo: "제1화",
+    bodyKo: "쿠로카라는 별명은 나오지만 원문 용어는 없다.",
+    usedGlossaryEntries: [],
+    newGlossaryCandidates: [],
+    qaIssueIds: [],
+    model: "dry-run",
+    backend: "dry-run",
+    createdAt: new Date().toISOString()
+  };
+
+  const issues = runQA(episode, result, glossary);
+  assert.equal(issues.some((issue) => issue.type === "name_inconsistency" || issue.type === "forbidden_term"), false);
 });
 
 test("QA issues carry paragraph locations for Review Desk detail", () => {

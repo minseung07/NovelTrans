@@ -2,6 +2,17 @@
 
 All notable changes to NovelTrans will be documented in this file.
 
+## [2.0.4] - 2026-05-29
+
+### Fixed
+
+- Made web import HTML body extraction preserve nested same-tag content.
+- Prevented unfinished or empty exports from marking projects as `exported`.
+- Kept long-episode chunk metadata out of translated episode titles.
+- Reduced glossary QA false positives by checking target variants only when the source term appears in the episode.
+- Hardened config loading against malformed nested JSON values.
+- Made TXT and EPUB glossary appendices consistently include only confirmed or locked terms.
+
 ## [2.0.3] - 2026-05-29
 
 ### Changed

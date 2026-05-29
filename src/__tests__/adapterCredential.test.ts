@@ -4,6 +4,7 @@ import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { saveOpenAICompatibleApiKey, loadOpenAICompatibleApiKey, clearOpenAICompatibleApiKey, getCredentialPath } from "../config/credentialStore.js";
+import { getConfigPath, loadConfig } from "../config/configStore.js";
 import { defaultConfig } from "../config/defaultConfig.js";
 import { createTranslatorAdapter } from "../translation/adapters/adapterFactory.js";
 import { CodexCliAdapter } from "../translation/adapters/codexCliAdapter.js";
@@ -20,6 +21,34 @@ test("stores OpenAI-compatible API key outside plain config text", async () => {
 
   await clearOpenAICompatibleApiKey(configDir);
   assert.equal(loadOpenAICompatibleApiKey(configDir), undefined);
+});
+
+test("config loading falls back safely for malformed nested values", async () => {
+  const configDir = await mkdtemp(join(tmpdir(), "noveltrans-bad-config-"));
+  await writeFile(
+    getConfigPath(configDir),
+    JSON.stringify({
+      defaultBackend: "not-a-backend",
+      outputFormats: "epub",
+      concurrency: "bad",
+      qa: null,
+      epub: "bad",
+      openAICompatible: null,
+      codexCli: null,
+      logLevel: "verbose"
+    }),
+    "utf8"
+  );
+
+  const config = await loadConfig(configDir);
+  assert.equal(config.defaultBackend, defaultConfig.defaultBackend);
+  assert.deepEqual(config.outputFormats, defaultConfig.outputFormats);
+  assert.equal(config.concurrency, defaultConfig.concurrency);
+  assert.deepEqual(config.qa, defaultConfig.qa);
+  assert.deepEqual(config.epub, defaultConfig.epub);
+  assert.equal(config.openAICompatible.baseUrl, defaultConfig.openAICompatible.baseUrl);
+  assert.equal(config.codexCli.command, defaultConfig.codexCli.command);
+  assert.equal(config.logLevel, defaultConfig.logLevel);
 });
 
 test("Codex CLI adapter invokes codex exec and reads the last message file", async () => {

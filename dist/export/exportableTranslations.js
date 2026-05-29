@@ -14,7 +14,7 @@ export async function loadExportableTranslations(projectDir) {
             translations.set(episode.id, result);
         }
     }
-    return { episodes, translations };
+    return { episodes, translations, episodeStates: stateInfo.states, hasEpisodeStates: stateInfo.hasStates };
 }
 export async function countExportableTranslatedEpisodes(projectDir) {
     return (await loadExportableTranslations(projectDir)).translations.size;
@@ -22,8 +22,12 @@ export async function countExportableTranslatedEpisodes(projectDir) {
 function loadEpisodeStateInfo(projectDir) {
     const stateStore = new ProjectStateStore(projectPaths(projectDir).projectDb);
     try {
-        const states = new Map(stateStore.listEpisodeStates().map((state) => [state.episodeId, state]));
-        return { hasStates: states.size > 0, states };
+        const states = stateStore.listEpisodeStates();
+        return {
+            hasStates: states.length > 0,
+            states,
+            stateById: new Map(states.map((state) => [state.episodeId, state]))
+        };
     }
     finally {
         stateStore.close();
@@ -33,5 +37,5 @@ function isExportableEpisode(stateInfo, episodeId) {
     if (!stateInfo.hasStates) {
         return true;
     }
-    return stateInfo.states.get(episodeId)?.status === "completed";
+    return stateInfo.stateById.get(episodeId)?.status === "completed";
 }

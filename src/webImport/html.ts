@@ -19,13 +19,14 @@ export function extractTitle(html: string): string | null {
 }
 
 export function extractElementById(html: string, id: string): string | null {
-  const pattern = new RegExp(`<([a-z0-9]+)\\b[^>]*id=["']${escapeRegExp(id)}["'][^>]*>([\\s\\S]*?)<\\/\\1>`, "i");
-  return html.match(pattern)?.[2] ?? null;
+  return extractElement(html, (attrs) => attributeValue(attrs, "id") === id);
 }
 
 export function extractElementByClass(html: string, className: string): string | null {
-  const pattern = new RegExp(`<([a-z0-9]+)\\b[^>]*class=["'][^"']*\\b${escapeRegExp(className)}\\b[^"']*["'][^>]*>([\\s\\S]*?)<\\/\\1>`, "i");
-  return html.match(pattern)?.[2] ?? null;
+  return extractElement(html, (attrs) => {
+    const classValue = attributeValue(attrs, "class");
+    return classValue ? classValue.split(/\s+/).includes(className) : false;
+  });
 }
 
 export function extractAnchorLinks(html: string): Array<{ href: string; text: string }> {
@@ -96,6 +97,53 @@ export function absoluteUrl(base: string, href: string): string {
 
 function fromCodePoint(value: number, fallback: string): string {
   return Number.isFinite(value) ? String.fromCodePoint(value) : fallback;
+}
+
+function extractElement(html: string, matches: (attrs: string) => boolean): string | null {
+  const openTagPattern = /<([a-z0-9]+)\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = openTagPattern.exec(html))) {
+    const tagName = match[1]?.toLowerCase();
+    const attrs = match[2] ?? "";
+    if (!tagName || !matches(attrs)) {
+      continue;
+    }
+    return extractBalancedElementBody(html, tagName, openTagPattern.lastIndex, match[0] ?? "");
+  }
+  return null;
+}
+
+function extractBalancedElementBody(html: string, tagName: string, bodyStart: number, openingTag: string): string | null {
+  if (isSelfClosingTag(openingTag)) {
+    return "";
+  }
+  const tagPattern = new RegExp(`</?${escapeRegExp(tagName)}\\b[^>]*>`, "gi");
+  tagPattern.lastIndex = bodyStart;
+  let depth = 1;
+  let match: RegExpExecArray | null;
+  while ((match = tagPattern.exec(html))) {
+    const tag = match[0] ?? "";
+    if (tag.startsWith("</")) {
+      depth -= 1;
+      if (depth === 0) {
+        return html.slice(bodyStart, match.index);
+      }
+    } else if (!isSelfClosingTag(tag)) {
+      depth += 1;
+    }
+  }
+  return null;
+}
+
+function isSelfClosingTag(tag: string): boolean {
+  return /\/\s*>$/.test(tag);
+}
+
+function attributeValue(attrs: string, name: string): string | null {
+  const pattern = new RegExp(`\\b${escapeRegExp(name)}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`, "i");
+  const match = attrs.match(pattern);
+  const value = match?.[1] ?? match?.[2] ?? match?.[3];
+  return value === undefined ? null : decodeHtml(value);
 }
 
 function escapeRegExp(value: string): string {

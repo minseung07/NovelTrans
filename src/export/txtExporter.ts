@@ -6,6 +6,7 @@ import type { TranslationResult } from "../domain/translation.js";
 import { writeText } from "../storage/jsonFile.js";
 import { projectPaths } from "../storage/projectPaths.js";
 import { slugify } from "../utils/path.js";
+import { glossaryAppendixEntries } from "./glossaryAppendix.js";
 
 export async function exportTxt(
   metadata: ProjectMetadata,
@@ -31,7 +32,7 @@ export async function exportTxt(
   }
 
   if (metadata.outputOptions.includeGlossaryAppendix) {
-    const confirmedEntries = glossary.entries.filter((entry) => entry.target && (entry.status === "confirmed" || entry.status === "locked"));
+    const confirmedEntries = glossaryAppendixEntries(glossary.entries);
     if (confirmedEntries.length > 0) {
       lines.push("Glossary", "--------", "");
       for (const entry of confirmedEntries) {

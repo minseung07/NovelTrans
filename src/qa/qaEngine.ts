@@ -100,11 +100,14 @@ function applyGlossaryChecks(
   targetParagraphs: string[],
   add: (issue: Omit<QAIssue, "id" | "episodeId" | "resolved" | "createdAt">) => void
 ): void {
-  if (entry.status === "deprecated") {
+  if (entry.status === "deprecated" || !entry.source) {
     return;
   }
   const sourceParagraph = firstParagraph(sourceParagraphs, (paragraph) => paragraph.includes(entry.source));
-  if (entry.target && episode.sourceText.includes(entry.source) && entry.locked && !result.bodyKo.includes(entry.target)) {
+  if (!sourceParagraph) {
+    return;
+  }
+  if (entry.target && entry.locked && !result.bodyKo.includes(entry.target)) {
     add({
       type: "locked_term_violation",
       severity: "error",
@@ -115,7 +118,7 @@ function applyGlossaryChecks(
     });
   }
 
-  if (entry.target && episode.sourceText.includes(entry.source) && entry.status === "confirmed" && !result.bodyKo.includes(entry.target)) {
+  if (entry.target && entry.status === "confirmed" && !result.bodyKo.includes(entry.target)) {
     add({
       type: "glossary_mismatch",
       severity: "warning",

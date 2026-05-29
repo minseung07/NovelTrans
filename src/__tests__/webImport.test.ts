@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { defaultConfig } from "../config/defaultConfig.js";
 import { listEpisodes } from "../storage/projectStore.js";
 import { parseEpisodeRange } from "../webImport/episodeRange.js";
+import { extractElementByClass, extractElementById, htmlToText } from "../webImport/html.js";
 import { WebImportService } from "../webImport/webImportService.js";
 import type { WebFetch } from "../webImport/httpClient.js";
 import { detectWebImportUrl } from "../webImport/urlDetector.js";
@@ -18,6 +19,26 @@ test("web import detects supported sites and parses episode ranges", () => {
   assert.deepEqual(parseEpisodeRange("1-3", 10), { start: 1, end: 3, label: "1-3화" });
   assert.deepEqual(parseEpisodeRange("latest-2", 10), { start: 9, end: 10, label: "최신 2화" });
   assert.deepEqual(parseEpisodeRange("4-", 6), { start: 4, end: 6, label: "4화부터 끝까지" });
+});
+
+test("HTML element extraction keeps nested same-tag content", () => {
+  const html = `
+    <main id="root">
+      <div class="widget-episodeBody">
+        <div><p>첫 문단</p></div>
+        <p>둘째 문단</p>
+      </div>
+      <div class="other">다른 본문</div>
+    </main>
+  `;
+  const byClass = extractElementByClass(html, "widget-episodeBody");
+  const byId = extractElementById(html, "root");
+
+  assert.ok(byClass);
+  assert.match(htmlToText(byClass), /첫 문단/);
+  assert.match(htmlToText(byClass), /둘째 문단/);
+  assert.ok(byId);
+  assert.match(htmlToText(byId), /다른 본문/);
 });
 
 test("web import service creates a project from Kakuyomu fixtures", async () => {

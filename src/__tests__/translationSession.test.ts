@@ -170,7 +170,9 @@ test("long episode bodies are translated in chunks and merged as one result", as
   });
 
   assert.deepEqual(adapter.episodeIds, ["episode_001_chunk_1", "episode_001_chunk_2"]);
+  assert.deepEqual(adapter.episodeTitles, ["第1話 長い本文", "第1話 長い本文"]);
   assert.equal(result.episodeId, "episode_001");
+  assert.equal(result.titleKo, "第1話 長い本文");
   assert.match(result.bodyKo, /episode_001_chunk_1/);
   assert.match(result.bodyKo, /episode_001_chunk_2/);
 });
@@ -256,6 +258,7 @@ class RecordingAdapter implements TranslatorAdapter {
   readonly id = "recording-test";
   readonly label = "Recording test adapter";
   readonly episodeIds: string[] = [];
+  readonly episodeTitles: string[] = [];
 
   async checkAvailability(): Promise<AdapterStatus> {
     return { available: true, message: "ok" };
@@ -263,9 +266,10 @@ class RecordingAdapter implements TranslatorAdapter {
 
   async translateEpisode(input: TranslationInput): Promise<TranslationResult> {
     this.episodeIds.push(input.episode.id);
+    this.episodeTitles.push(input.episode.title);
     return {
       episodeId: input.episode.id,
-      titleKo: `제${input.episode.episodeNo}화`,
+      titleKo: input.episode.title,
       bodyKo: `번역 ${input.episode.id}`,
       usedGlossaryEntries: [],
       newGlossaryCandidates: [],

@@ -4,7 +4,7 @@ import { writeProjectLog } from "../storage/logger.js";
 import { nowIso } from "../utils/time.js";
 import { exportEpub } from "./epubExporter.js";
 import { exportTxt } from "./txtExporter.js";
-import { loadExportableTranslations } from "./exportableTranslations.js";
+import { loadExportableTranslations, type ExportableTranslations } from "./exportableTranslations.js";
 
 export type ExportFormat = "txt" | "epub";
 
@@ -14,7 +14,8 @@ export type ExportSummary = {
 };
 
 export async function exportProject(metadata: ProjectMetadata, formats: ExportFormat[]): Promise<ExportSummary> {
-  const { episodes, translations } = await loadExportableTranslations(metadata.projectDir);
+  const exportable = await loadExportableTranslations(metadata.projectDir);
+  const { episodes, translations } = exportable;
   const glossary = await loadGlossary(metadata.projectDir);
   const files: string[] = [];
   if (formats.includes("txt")) {
@@ -24,7 +25,7 @@ export async function exportProject(metadata: ProjectMetadata, formats: ExportFo
     files.push(await exportEpub(metadata, episodes, translations, glossary));
   }
 
-  metadata.status = "exported";
+  metadata.status = statusAfterExport(metadata, exportable);
   metadata.updatedAt = nowIso();
   await saveProjectMetadata(metadata);
   await writeProjectLog({
@@ -40,4 +41,27 @@ export async function exportProject(metadata: ProjectMetadata, formats: ExportFo
     files,
     translatedEpisodeCount: translations.size
   };
+}
+
+function statusAfterExport(metadata: ProjectMetadata, exportable: ExportableTranslations): ProjectMetadata["status"] {
+  if (isCompleteExport(exportable)) {
+    return "exported";
+  }
+  if (exportable.hasEpisodeStates && exportable.episodeStates.some((state) => state.status === "failed")) {
+    return "completed_with_issues";
+  }
+  return metadata.status === "exported" ? "ready" : metadata.status;
+}
+
+function isCompleteExport(exportable: ExportableTranslations): boolean {
+  if (exportable.translations.size === 0) {
+    return false;
+  }
+  if (!exportable.hasEpisodeStates) {
+    return exportable.episodes.length > 0 && exportable.translations.size === exportable.episodes.length;
+  }
+  return (
+    exportable.episodeStates.length > 0 &&
+    exportable.episodeStates.every((state) => state.status === "completed" || state.status === "skipped")
+  );
 }

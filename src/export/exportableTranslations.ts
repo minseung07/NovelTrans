@@ -8,6 +8,8 @@ import { ProjectStateStore } from "../storage/stateStore.js";
 export type ExportableTranslations = {
   episodes: Episode[];
   translations: Map<string, TranslationResult>;
+  episodeStates: EpisodeState[];
+  hasEpisodeStates: boolean;
 };
 
 export async function loadExportableTranslations(projectDir: string): Promise<ExportableTranslations> {
@@ -23,26 +25,36 @@ export async function loadExportableTranslations(projectDir: string): Promise<Ex
       translations.set(episode.id, result);
     }
   }
-  return { episodes, translations };
+  return { episodes, translations, episodeStates: stateInfo.states, hasEpisodeStates: stateInfo.hasStates };
 }
 
 export async function countExportableTranslatedEpisodes(projectDir: string): Promise<number> {
   return (await loadExportableTranslations(projectDir)).translations.size;
 }
 
-function loadEpisodeStateInfo(projectDir: string): { hasStates: boolean; states: Map<string, EpisodeState> } {
+type EpisodeStateInfo = {
+  hasStates: boolean;
+  states: EpisodeState[];
+  stateById: Map<string, EpisodeState>;
+};
+
+function loadEpisodeStateInfo(projectDir: string): EpisodeStateInfo {
   const stateStore = new ProjectStateStore(projectPaths(projectDir).projectDb);
   try {
-    const states = new Map(stateStore.listEpisodeStates().map((state) => [state.episodeId, state]));
-    return { hasStates: states.size > 0, states };
+    const states = stateStore.listEpisodeStates();
+    return {
+      hasStates: states.length > 0,
+      states,
+      stateById: new Map(states.map((state) => [state.episodeId, state]))
+    };
   } finally {
     stateStore.close();
   }
 }
 
-function isExportableEpisode(stateInfo: { hasStates: boolean; states: Map<string, EpisodeState> }, episodeId: string): boolean {
+function isExportableEpisode(stateInfo: EpisodeStateInfo, episodeId: string): boolean {
   if (!stateInfo.hasStates) {
     return true;
   }
-  return stateInfo.states.get(episodeId)?.status === "completed";
+  return stateInfo.stateById.get(episodeId)?.status === "completed";
 }

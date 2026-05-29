@@ -8,6 +8,7 @@ import { ensureDir } from "../storage/jsonFile.js";
 import { projectPaths } from "../storage/projectPaths.js";
 import { slugify } from "../utils/path.js";
 import { escapeXml } from "../utils/text.js";
+import { glossaryAppendixEntries, type GlossaryAppendixEntry } from "./glossaryAppendix.js";
 import { createStoredZip } from "./zip.js";
 
 export async function exportEpub(
@@ -20,10 +21,11 @@ export async function exportEpub(
     .map((episode) => ({ episode, translation: translations.get(episode.id) }))
     .filter((item): item is { episode: Episode; translation: TranslationResult } => Boolean(item.translation));
   const cover = metadata.outputOptions.coverImagePath ? await loadCoverImage(metadata.outputOptions.coverImagePath) : null;
+  const appendixEntries = glossaryAppendixEntries(glossary.entries);
   const entries: Array<{ name: string; data: Buffer }> = [
     { name: "mimetype", data: Buffer.from("application/epub+zip", "utf8") },
     { name: "META-INF/container.xml", data: Buffer.from(containerXml(), "utf8") },
-    { name: "OEBPS/content.opf", data: Buffer.from(contentOpf(metadata, translatedEpisodes, glossary, cover), "utf8") },
+    { name: "OEBPS/content.opf", data: Buffer.from(contentOpf(metadata, translatedEpisodes, appendixEntries, cover), "utf8") },
     { name: "OEBPS/nav.xhtml", data: Buffer.from(navXhtml(metadata, translatedEpisodes), "utf8") },
     ...translatedEpisodes.map(({ episode, translation }) => ({
       name: `OEBPS/chapters/${episode.id}.xhtml`,
@@ -38,10 +40,10 @@ export async function exportEpub(
     );
   }
 
-  if (metadata.outputOptions.includeGlossaryAppendix) {
+  if (metadata.outputOptions.includeGlossaryAppendix && appendixEntries.length > 0) {
     entries.push({
       name: "OEBPS/glossary.xhtml",
-      data: Buffer.from(glossaryXhtml(metadata, glossary), "utf8")
+      data: Buffer.from(glossaryXhtml(metadata, appendixEntries), "utf8")
     });
   }
 
@@ -64,17 +66,18 @@ function containerXml(): string {
 function contentOpf(
   metadata: ProjectMetadata,
   translatedEpisodes: Array<{ episode: Episode; translation: TranslationResult }>,
-  glossary: GlossaryData,
+  glossaryEntries: GlossaryAppendixEntry[],
   cover: CoverImage | null
 ): string {
   const manifestItems = translatedEpisodes
     .map(({ episode }) => `<item id="${episode.id}" href="chapters/${episode.id}.xhtml" media-type="application/xhtml+xml"/>`)
     .join("\n    ");
   const spineItems = translatedEpisodes.map(({ episode }) => `<itemref idref="${episode.id}"/>`).join("\n    ");
-  const glossaryItem = metadata.outputOptions.includeGlossaryAppendix
+  const includeGlossary = metadata.outputOptions.includeGlossaryAppendix && glossaryEntries.length > 0;
+  const glossaryItem = includeGlossary
     ? `<item id="glossary" href="glossary.xhtml" media-type="application/xhtml+xml"/>`
     : "";
-  const glossarySpine = metadata.outputOptions.includeGlossaryAppendix && glossary.entries.length > 0 ? `<itemref idref="glossary"/>` : "";
+  const glossarySpine = includeGlossary ? `<itemref idref="glossary"/>` : "";
   const coverItems = cover
     ? `<item id="cover-image" href="images/${escapeXml(cover.fileName)}" media-type="${cover.mediaType}" properties="cover-image"/>
     <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>`
@@ -129,9 +132,8 @@ function chapterXhtml(metadata: ProjectMetadata, translation: TranslationResult)
   );
 }
 
-function glossaryXhtml(metadata: ProjectMetadata, glossary: GlossaryData): string {
-  const items = glossary.entries
-    .filter((entry) => entry.target)
+function glossaryXhtml(metadata: ProjectMetadata, entries: GlossaryAppendixEntry[]): string {
+  const items = entries
     .map((entry) => `<li>${escapeXml(entry.source)} → ${escapeXml(entry.target ?? "")}</li>`)
     .join("\n");
   return xhtmlDocument("Glossary", `<h1>Glossary</h1><ul>${items}</ul>`, Boolean(metadata.outputOptions.verticalWriting));

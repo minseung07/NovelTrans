@@ -7,7 +7,7 @@ import { defaultConfig } from "../config/defaultConfig.js";
 import { exportProject } from "../export/exporter.js";
 import { createProjectFromText, createProjectFromTxt, loadProjectOverview, rerunProjectQA, runTranslation } from "../engine/projectWorkflow.js";
 import { createTranslatorAdapter } from "../translation/adapters/adapterFactory.js";
-import { listEpisodes, loadGlossary, loadProjectMetadata, readAllQAIssues, readTranslation, saveProjectMetadata, saveQAIssues } from "../storage/projectStore.js";
+import { listEpisodes, loadGlossary, loadProjectMetadata, readAllQAIssues, readTranslation, saveGlossary, saveProjectMetadata, saveQAIssues } from "../storage/projectStore.js";
 import { readProjectLogTail } from "../storage/logger.js";
 import { translationMarkdownPath } from "../storage/projectPaths.js";
 import type { AdapterStatus, TranslationInput, TranslationResult, TranslatorAdapter } from "../domain/translation.js";
@@ -80,6 +80,7 @@ test("runs dry-run project creation, resume, failed retry, and TXT/EPUB export",
   assert.equal(translationEvents.some((event) => event.event === "episode_completed"), true);
   const exportEvents = await readProjectLogTail(created.metadata.projectDir, "export", 5);
   assert.equal(exportEvents.some((event) => event.event === "export_completed"), true);
+  assert.equal((await loadProjectMetadata(created.metadata.projectDir)).status, "exported");
 });
 
 test("creates a project from pasted source text", async () => {
@@ -99,6 +100,27 @@ test("creates a project from pasted source text", async () => {
   assert.equal(created.metadata.sourcePath, "paste://test");
   const overview = await loadProjectOverview(created.metadata.projectDir);
   assert.equal(overview.counts.pending, 2);
+});
+
+test("exporting an unfinished project does not mark it exported", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-unfinished-export-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 未完", "黒架は歩いた。", "", "第2話 未完", "聖印が光った。"].join("\n"),
+    sourceLabel: "paste://unfinished-export-test",
+    projectRoot: join(root, "projects"),
+    name: "Unfinished Export Novel",
+    backend: "dry-run",
+    model: "dry-run",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+
+  const metadata = await loadProjectMetadata(created.metadata.projectDir);
+  const exported = await exportProject(metadata, ["txt"]);
+
+  assert.equal(exported.translatedEpisodeCount, 0);
+  assert.equal((await loadProjectMetadata(created.metadata.projectDir)).status, "ready");
 });
 
 test("translation-provided glossary candidates are saved into the project glossary", async () => {
@@ -272,6 +294,99 @@ test("foreword sections are translated and exported separately", async () => {
   assert.match(txt, /Foreword/);
   const epub = await readFile(exported.files.find((file) => file.endsWith(".epub"))!);
   assert.match(epub.toString("latin1"), /Foreword/);
+});
+
+test("glossary appendix exports only confirmed and locked terms", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-glossary-export-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 用語", "AlphaSourceは歩いた。"].join("\n"),
+    sourceLabel: "paste://glossary-export-test",
+    projectRoot: join(root, "projects"),
+    name: "Glossary Export Novel",
+    backend: "dry-run",
+    model: "dry-run",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+  await runTranslation(created.metadata.projectDir, createTranslatorAdapter("dry-run", defaultConfig), "resume", 1);
+
+  const now = nowIso();
+  const glossary = await loadGlossary(created.metadata.projectDir);
+  glossary.entries = [
+    {
+      id: "glossary_confirmed",
+      source: "AlphaSource",
+      target: "AlphaTarget",
+      type: "term",
+      status: "confirmed",
+      aliases: [],
+      forbiddenTargets: [],
+      notes: "",
+      confidence: 1,
+      sourceScore: 1,
+      targetScore: 1,
+      occurrenceCount: 1,
+      firstSeenEpisode: 1,
+      lastSeenEpisode: 1,
+      locked: false,
+      targetCandidates: [],
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: "glossary_candidate",
+      source: "BetaSource",
+      target: "BetaTarget",
+      type: "term",
+      status: "candidate",
+      aliases: [],
+      forbiddenTargets: [],
+      notes: "",
+      confidence: 1,
+      sourceScore: 1,
+      targetScore: 1,
+      occurrenceCount: 1,
+      firstSeenEpisode: 1,
+      lastSeenEpisode: 1,
+      locked: false,
+      targetCandidates: [],
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: "glossary_deprecated",
+      source: "GammaSource",
+      target: "GammaTarget",
+      type: "term",
+      status: "deprecated",
+      aliases: [],
+      forbiddenTargets: [],
+      notes: "",
+      confidence: 1,
+      sourceScore: 1,
+      targetScore: 1,
+      occurrenceCount: 1,
+      firstSeenEpisode: 1,
+      lastSeenEpisode: 1,
+      locked: false,
+      targetCandidates: [],
+      createdAt: now,
+      updatedAt: now
+    }
+  ];
+  glossary.conflicts = [];
+  glossary.updatedAt = now;
+  await saveGlossary(created.metadata.projectDir, glossary);
+
+  const exported = await exportProject(await loadProjectMetadata(created.metadata.projectDir), ["txt", "epub"]);
+  const txt = await readFile(exported.files.find((file) => file.endsWith(".txt"))!, "utf8");
+  const epub = (await readFile(exported.files.find((file) => file.endsWith(".epub"))!)).toString("utf8");
+
+  assert.match(txt, /AlphaSource -> AlphaTarget/);
+  assert.doesNotMatch(txt, /BetaSource|GammaSource/);
+  assert.match(epub, /AlphaSource/);
+  assert.doesNotMatch(epub, /BetaSource|GammaSource/);
 });
 
 class CandidateAdapter implements TranslatorAdapter {
