@@ -1,0 +1,38 @@
+{
+  "name": "noveltrans",
+  "version": "2.0.0",
+  "description": "TypeScript-based project translator for long-form novel text.",
+  "type": "module",
+  "bin": {
+    "noveltrans": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "!dist/__tests__",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "test": "node --test dist/**/*.test.js",
+    "pretest": "npm run build",
+    "smoke": "npm run build && node dist/index.js self-test --workspace tmp/self-test"
+  },
+  "keywords": [
+    "translation",
+    "novel",
+    "typescript",
+    "cli"
+  ],
+  "author": "minseung07",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

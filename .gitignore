@@ -1,0 +1,11 @@
+node_modules/
+dist/
+tmp/
+projects/
+coverage/
+.agents/
+.codex/
+.env
+.env.*
+*.tgz
+*.log
