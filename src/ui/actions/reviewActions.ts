@@ -22,6 +22,8 @@ export type RetryIssueEpisodeResult = {
   message: string;
 };
 
+export type RetryIssueScope = "all-open" | "same-type";
+
 export async function markSelectedIssueIgnored(projectDir: string, model: ProjectUiModel, selectedIndex: number): Promise<string> {
   const issue = selectedOpenIssue(model, selectedIndex);
   if (!issue) {
@@ -84,6 +86,67 @@ export async function retrySelectedIssueEpisodeResult(
     failed: summary.failed,
     cancelled: summary.cancelled,
     message: `${issue.episodeId} 재번역 완료: 완료 ${summary.completed}, 실패 ${summary.failed}, 취소 ${summary.cancelled}.`
+  };
+}
+
+export async function retryIssueEpisodesResult(
+  projectDir: string,
+  model: ProjectUiModel,
+  selectedIndex: number,
+  scope: RetryIssueScope,
+  adapter: TranslatorAdapter,
+  signal?: AbortSignal,
+  qaOptions?: NovelTransConfig["qa"]
+): Promise<RetryIssueEpisodeResult> {
+  const selected = selectedOpenIssue(model, selectedIndex);
+  if (!selected) {
+    return {
+      episodeId: "",
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+      message: "선택된 검수 항목이 없습니다."
+    };
+  }
+
+  const issues = scope === "same-type" ? model.reviewDesk.openIssues.filter((issue) => issue.type === selected.type) : model.reviewDesk.openIssues;
+  const episodeIds = Array.from(new Set(issues.map((issue) => issue.episodeId)));
+  if (episodeIds.length === 0) {
+    return {
+      episodeId: "",
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+      message: "재번역할 검수 화가 없습니다."
+    };
+  }
+
+  let completed = 0;
+  let failed = 0;
+  let cancelled = 0;
+  for (const episodeId of episodeIds) {
+    const summary = await translateSingleEpisode({
+      projectDir,
+      episodeId,
+      adapter,
+      reason: scope === "same-type" ? `Review Desk batch: ${selected.type}` : "Review Desk batch",
+      signal,
+      qaOptions
+    });
+    completed += summary.completed;
+    failed += summary.failed;
+    cancelled += summary.cancelled;
+    if (signal?.aborted) {
+      break;
+    }
+  }
+
+  return {
+    episodeId: episodeIds.join(","),
+    completed,
+    failed,
+    cancelled,
+    message: `검수 화 재번역 완료: 대상 ${episodeIds.length}, 완료 ${completed}, 실패 ${failed}, 취소 ${cancelled}.`
   };
 }
 

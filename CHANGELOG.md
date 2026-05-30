@@ -2,6 +2,45 @@
 
 All notable changes to NovelTrans will be documented in this file.
 
+## [2.1.0] - 2026-05-30
+
+### Added
+
+- Added the new dependency-free `src/ui-v2/` terminal frontend, including a raw-mode/alternate-screen runtime, diff renderer, semantic input decoder, theme/capability detection, and pure reusable components for boxes, rails, lists, badges, progress bars, breadcrumbs, status bars, modals, and overlays.
+- Added the new Library and Project Workspace flow. The Project Workspace replaces the old room-based app with Overview, Source, Translate, Glossary, QA, and Export stages on a responsive stage rail.
+- Added global job state in the v2 app so translation/retry progress remains visible while moving between stages.
+- Added v2 Source, Translate, Glossary, QA, and Export stage views with source previews, inline failed-episode recovery, glossary queue triage, QA issue comparison, output option toggles, and export generation.
+- Added v2 Help, Settings, Command Palette, confirmation modal, input modal, toast dismissal, search, and keyboard navigation flows.
+- Added URL import support in the v2 input flow where users paste only the URL, then enter the episode range as a separate option.
+- Added reusable UI action helpers for v2 import and translation jobs.
+- Added static v2 renderers so non-interactive commands can reuse the same Library, Project stage, and Command Palette views as the interactive app.
+- Added Review Desk batch retranslation helpers for all open issues or issues of the same type.
+- Added tests for the v2 runtime, input decoding, renderer behavior, theme capability fallback, Library, Project shell, Source stage, Glossary/QA triage, Phase 4 overlays/actions, v2 workflow imports, and Codex model/credential handling.
+
+### Changed
+
+- Made the v2 frontend the default for `noveltrans app` and for launching `noveltrans` with no arguments in a TTY.
+- Rewired `bookshelf`, `studio`, `glossary-lab`, `review-desk`, `failure-recovery`, `export-room`, and `palette` command output to the new v2 static views.
+- Simplified web imports. CLI URL import now uses `--url ... --episodes ...` without `--confirm-rights`; TUI URL import asks only for the episode range. Rights confirmation is set internally for imported projects.
+- Changed the import action so v2 TXT, inline text, and web imports do not pin the global default model into project metadata.
+- Changed settings model cycling so the active backend model is updated. Codex CLI model changes now update the Codex model path instead of cycling only the OpenAI-compatible model.
+- Changed Codex project adapter creation to clear legacy OpenAI default model pins from Codex-backed project metadata before creating the runtime adapter.
+- Expanded the command palette with afterword output, model, and concurrency commands.
+- Updated README command examples and UI documentation for v2 and `2.1.0`.
+- Updated `package.json` and `package-lock.json` to version `2.1.0`.
+
+### Fixed
+
+- Fixed Codex CLI projects created with a stale generic default model so v2 jobs fall back to the configured Codex runtime model.
+- Fixed URL import ergonomics in the TUI by treating episode range as a UI option instead of requiring command-style text after the URL.
+- Fixed bracketed paste handling for URL import input through the v2 semantic input path.
+
+### Removed
+
+- Removed the legacy interactive terminal UI implementation, including the monolithic `terminalApp`, old screens, key handlers, renderer, line reader, layout helpers, import drop-in flow, and old task/status widgets.
+- Removed legacy UI action/screen tests that targeted the deleted terminal UI.
+- Deprecated the old `docs/UI_UX_PLANS.md` plan in favor of `docs/UI_V2_PLAN.md`.
+
 ## [2.0.4] - 2026-05-29
 
 ### Fixed

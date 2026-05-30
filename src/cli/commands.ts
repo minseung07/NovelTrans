@@ -16,16 +16,9 @@ import { createTranslatorAdapter } from "../translation/adapters/adapterFactory.
 import { ensureDir } from "../storage/jsonFile.js";
 import { writeProjectLog } from "../storage/logger.js";
 import { loadGlossary, loadProjectMetadata, saveGlossary, saveProjectMetadata } from "../storage/projectStore.js";
-import { loadBookshelfModel, loadProjectUiModel } from "../ui/studioData.js";
 import { setCodexCliModel, setOpenAICompatibleModel } from "../ui/actions/settingsActions.js";
-import { runTerminalStudio } from "../ui/terminalApp.js";
-import { renderBookshelfScreen } from "../ui/screens/bookshelfScreen.js";
-import { renderCommandPaletteScreen } from "../ui/screens/commandPaletteScreen.js";
-import { renderExportRoomScreen } from "../ui/screens/exportRoomScreen.js";
-import { renderGlossaryLabScreen } from "../ui/screens/glossaryLabScreen.js";
-import { renderReviewDeskScreen } from "../ui/screens/reviewDeskScreen.js";
-import { renderStudioScreen } from "../ui/screens/studioScreen.js";
-import { renderFailureRecoveryScreen } from "../ui/screens/failureRecoveryScreen.js";
+import { runUiV2 } from "../ui-v2/app.js";
+import { renderLibraryStatic, renderProjectStageStatic, renderPaletteStatic } from "../ui-v2/static.js";
 import { errorLogPath, skipFailedAndExport } from "../ui/actions/failureActions.js";
 import { WebImportService } from "../webImport/webImportService.js";
 import { parseArgs, getBooleanOption, getListOption, getStringOption, requireStringOption } from "./args.js";
@@ -134,7 +127,7 @@ export async function runCli(argv: string[], io: CliIO = { stdout: console, stde
 
 async function commandApp(args: ReturnType<typeof parseArgs>, _io: CliIO): Promise<void> {
   const config = await loadConfigFromArgs(args);
-  await runTerminalStudio({
+  await runUiV2({
     config,
     configDir: getStringOption(args, "config-dir"),
     projectRoot: getStringOption(args, "workspace")
@@ -143,9 +136,8 @@ async function commandApp(args: ReturnType<typeof parseArgs>, _io: CliIO): Promi
 
 async function commandBookshelf(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
   const config = await loadConfigFromArgs(args);
-  const workspace = getStringOption(args, "workspace");
-  const projectRoot = resolveProjectRoot(config, workspace);
-  io.stdout.log(renderBookshelfScreen(await loadBookshelfModel(projectRoot)));
+  const projectRoot = resolveProjectRoot(config, getStringOption(args, "workspace"));
+  io.stdout.log(await renderLibraryStatic(config, projectRoot));
 }
 
 async function commandImport(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
@@ -167,7 +159,7 @@ async function commandImport(args: ReturnType<typeof parseArgs>, io: CliIO): Pro
       includeAfterword: config.epub.includeAfterword,
       verticalWriting: config.epub.verticalWriting
     },
-    userConfirmedRights: getBooleanOption(args, "confirm-rights")
+    userConfirmedRights: true
   };
   const inlineText = getStringOption(args, "text");
   const url = getStringOption(args, "url");
@@ -194,9 +186,6 @@ async function importFromWebUrl(
   args: ReturnType<typeof parseArgs>,
   baseOptions: ImportBaseOptions
 ): Promise<Awaited<ReturnType<typeof createProjectFromText>>> {
-  if (!baseOptions.userConfirmedRights) {
-    throw new Error("URL import requires --confirm-rights for personal-use/public-episode confirmation.");
-  }
   const range = getStringOption(args, "episodes");
   if (!range) {
     throw new Error("URL import requires --episodes. Example: --episodes 1-10");
@@ -234,18 +223,18 @@ async function commandStatus(args: ReturnType<typeof parseArgs>, io: CliIO): Pro
 }
 
 async function commandStudio(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
-  const model = await loadProjectUiModel(resolve(requireStringOption(args, "project")));
-  io.stdout.log(renderStudioScreen(model));
+  const config = await loadConfigFromArgs(args);
+  io.stdout.log(await renderProjectStageStatic(config, resolve(requireStringOption(args, "project")), "overview"));
 }
 
 async function commandGlossaryLab(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
-  const model = await loadProjectUiModel(resolve(requireStringOption(args, "project")));
-  io.stdout.log(renderGlossaryLabScreen(model, numberOption(args, "selected", 0)));
+  const config = await loadConfigFromArgs(args);
+  io.stdout.log(await renderProjectStageStatic(config, resolve(requireStringOption(args, "project")), "glossary"));
 }
 
 async function commandReviewDesk(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
-  const model = await loadProjectUiModel(resolve(requireStringOption(args, "project")));
-  io.stdout.log(renderReviewDeskScreen(model, numberOption(args, "selected", 0)));
+  const config = await loadConfigFromArgs(args);
+  io.stdout.log(await renderProjectStageStatic(config, resolve(requireStringOption(args, "project")), "qa"));
 }
 
 async function commandFailureRecovery(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
@@ -262,17 +251,17 @@ async function commandFailureRecovery(args: ReturnType<typeof parseArgs>, io: Cl
   if (action !== "screen") {
     throw new Error(`Unknown failure recovery action: ${action}.`);
   }
-  const model = await loadProjectUiModel(projectDir);
-  io.stdout.log(renderFailureRecoveryScreen(model));
+  const config = await loadConfigFromArgs(args);
+  io.stdout.log(await renderProjectStageStatic(config, projectDir, "translate"));
 }
 
 async function commandExportRoom(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
-  const model = await loadProjectUiModel(resolve(requireStringOption(args, "project")));
-  io.stdout.log(renderExportRoomScreen(model));
+  const config = await loadConfigFromArgs(args);
+  io.stdout.log(await renderProjectStageStatic(config, resolve(requireStringOption(args, "project")), "export"));
 }
 
 async function commandPalette(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
-  io.stdout.log(renderCommandPaletteScreen(getStringOption(args, "query") ?? "", Boolean(getStringOption(args, "project"))));
+  io.stdout.log(renderPaletteStatic(getStringOption(args, "query") ?? "", Boolean(getStringOption(args, "project"))));
 }
 
 async function commandExport(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
@@ -518,7 +507,7 @@ function renderHelp(): string {
     "  app [--workspace projects]",
     "  bookshelf [--workspace projects]",
     "  import --source source.txt [--name Title] [--workspace projects]",
-    "  import --url https://kakuyomu.jp/works/... --episodes 1-10 --confirm-rights",
+    "  import --url https://kakuyomu.jp/works/... --episodes 1-10",
     "  translate --project projects/title [--backend dry-run] [--model gpt-5.5]",
     "  retry --project projects/title",
     "  status --project projects/title",

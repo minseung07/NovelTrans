@@ -7,11 +7,14 @@ import { defaultConfig } from "../config/defaultConfig.js";
 import { exportProject } from "../export/exporter.js";
 import { createProjectFromText, createProjectFromTxt, loadProjectOverview, rerunProjectQA, runTranslation } from "../engine/projectWorkflow.js";
 import { createTranslatorAdapter } from "../translation/adapters/adapterFactory.js";
-import { listEpisodes, loadGlossary, loadProjectMetadata, readAllQAIssues, readTranslation, saveGlossary, saveProjectMetadata, saveQAIssues } from "../storage/projectStore.js";
+import { discoverProjectDirs, listEpisodes, loadGlossary, loadProjectMetadata, readAllQAIssues, readTranslation, saveGlossary, saveProjectMetadata, saveQAIssues } from "../storage/projectStore.js";
 import { readProjectLogTail } from "../storage/logger.js";
 import { translationMarkdownPath } from "../storage/projectPaths.js";
+import { importSourceForUi } from "../ui/actions/importActions.js";
 import type { AdapterStatus, TranslationInput, TranslationResult, TranslatorAdapter } from "../domain/translation.js";
 import { nowIso } from "../utils/time.js";
+import { WebImportService } from "../webImport/webImportService.js";
+import type { WebFetch } from "../webImport/httpClient.js";
 
 test("runs dry-run project creation, resume, failed retry, and TXT/EPUB export", async () => {
   const root = await mkdtemp(join(tmpdir(), "noveltrans-"));
@@ -100,6 +103,69 @@ test("creates a project from pasted source text", async () => {
   assert.equal(created.metadata.sourcePath, "paste://test");
   const overview = await loadProjectOverview(created.metadata.projectDir);
   assert.equal(overview.counts.pending, 2);
+});
+
+test("v2 import action does not pin the global default model into project metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-v2-import-"));
+  const projectRoot = join(root, "projects");
+  const config = {
+    ...defaultConfig,
+    defaultBackend: "codex-cli" as const,
+    defaultModel: "global-default-model",
+    codexCli: { ...defaultConfig.codexCli, model: "codex-backend-model" }
+  };
+
+  const message = await importSourceForUi(["第1話 v2", "本文です。"].join("\n"), config, projectRoot);
+  assert.match(message, /プロジェクト|프로젝트 생성/);
+
+  const [projectDir] = await discoverProjectDirs(projectRoot);
+  assert.ok(projectDir);
+  const metadata = await loadProjectMetadata(projectDir);
+  assert.equal(metadata.options.backend, "codex-cli");
+  assert.equal(metadata.options.model, undefined);
+});
+
+test("v2 web import action defaults rights confirmation and imports through WebImportService", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-v2-web-import-"));
+  const projectRoot = join(root, "projects");
+  const missingEpisodes = await importSourceForUi("https://kakuyomu.jp/works/123", defaultConfig, projectRoot);
+  assert.match(missingEpisodes, /화수 범위/);
+
+  const service = new WebImportService({
+    delayMs: 0,
+    fetchFn: fixtureFetch({
+      "https://kakuyomu.jp/works/123": `
+        <html><head><meta property="og:title" content="星の庭 - カクヨム"></head>
+        <body>
+          <a href="/users/alice">アリス</a>
+          <script id="__NEXT_DATA__" type="application/json">
+            {"props":{"pageProps":{"__APOLLO_STATE__":{
+              "Work:123":{"id":"123","tableOfContentsV2":[{"__ref":"TableOfContentsChapter:"}]},
+              "TableOfContentsChapter:":{"episodeUnions":[{"__ref":"Episode:1001"}]},
+              "Episode:1001":{"id":"1001","title":"第1話 庭の始まり"}
+            }}}}
+          </script>
+        </body></html>
+      `,
+      "https://kakuyomu.jp/works/123/episodes/1001": `
+        <html><body><div class="widget-episodeBody"><p>黒架は庭に立った。</p></div></body></html>
+      `
+    })
+  });
+
+  const message = await importSourceForUi("https://kakuyomu.jp/works/123", defaultConfig, projectRoot, {
+    webImportService: service,
+    webImport: { episodes: "1" }
+  });
+  assert.match(message, /웹 프로젝트 생성/);
+
+  const [projectDir] = await discoverProjectDirs(projectRoot);
+  assert.ok(projectDir);
+  const metadata = await loadProjectMetadata(projectDir);
+  assert.equal(metadata.options.model, undefined);
+  const episodes = await listEpisodes(projectDir);
+  assert.equal(episodes[0]?.metadata.sourceSite, "kakuyomu");
+  assert.equal(episodes[0]?.metadata.sourceUrl, "https://kakuyomu.jp/works/123/episodes/1001");
 });
 
 test("exporting an unfinished project does not mark it exported", async () => {
@@ -388,6 +454,16 @@ test("glossary appendix exports only confirmed and locked terms", async () => {
   assert.match(epub, /AlphaSource/);
   assert.doesNotMatch(epub, /BetaSource|GammaSource/);
 });
+
+function fixtureFetch(fixtures: Record<string, string>): WebFetch {
+  return async (url) => {
+    const html = fixtures[url];
+    if (!html) {
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    }
+    return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  };
+}
 
 class CandidateAdapter implements TranslatorAdapter {
   readonly id = "candidate-test";

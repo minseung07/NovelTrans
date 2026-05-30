@@ -1,0 +1,97 @@
+// Project screen: composes the stage rail (or narrow tab strip) with the active
+// stage's detail panel. Only Overview is fully built in Phase 2; other stages
+// show a placeholder that later phases replace.
+import { box } from "../../components/box.js";
+import { rail, tabStrip } from "../../components/rail.js";
+import { row } from "../../components/geometry.js";
+import { renderOverview } from "./overview.js";
+import { renderSource } from "./source.js";
+import { renderGlossary } from "./glossary.js";
+import { renderQa } from "./qa.js";
+import { renderTranslate } from "./translate.js";
+import { renderExport } from "./export.js";
+// Rail box has a hard minimum width of 20 (normalizeBoxWidth), so the reserved
+// width must match it; otherwise the detail column overflows by 2 and the right
+// border gets truncated. detailWidth subtracts RAIL_WIDTH + 2 (gap).
+const RAIL_WIDTH = 20;
+const NARROW_WIDTH = 84;
+export const STAGE_ORDER = ["overview", "source", "translate", "glossary", "qa", "export"];
+export const STAGE_LABELS = {
+    overview: "개요",
+    source: "원문",
+    translate: "번역",
+    glossary: "용어",
+    qa: "검수",
+    export: "내보내기"
+};
+export function projectOf(model) {
+    if (model.route.screen !== "project") {
+        return null;
+    }
+    const { projectDir } = model.route;
+    return model.library.allProjects.find((project) => project.projectDir === projectDir) ?? null;
+}
+function stageBadge(stage, project) {
+    if (stage === "source") {
+        return { level: "info", text: String(project.episodes.length) };
+    }
+    if (stage === "translate" && project.overview.counts.failed > 0) {
+        return { level: "critical", text: String(project.overview.counts.failed) };
+    }
+    if (stage === "glossary") {
+        if (project.glossaryPulse.conflicts > 0) {
+            return { level: "critical", text: String(project.glossaryPulse.conflicts) };
+        }
+        if (project.glossaryPulse.candidates > 0) {
+            return { level: "info", text: String(project.glossaryPulse.candidates) };
+        }
+    }
+    if (stage === "qa") {
+        const open = project.qaIssues.filter((issue) => !issue.resolved).length;
+        if (open > 0) {
+            return { level: "warning", text: String(open) };
+        }
+    }
+    return undefined;
+}
+function railItems(project) {
+    return STAGE_ORDER.map((stage) => ({ label: STAGE_LABELS[stage], badge: project ? stageBadge(stage, project) : undefined }));
+}
+function stageDetail(model, stage, project, job, width) {
+    if (stage === "overview") {
+        return renderOverview(project, job, width);
+    }
+    if (stage === "source") {
+        return renderSource(project, model.sourceSelected, width);
+    }
+    if (stage === "glossary") {
+        return renderGlossary(project, model.glossarySelected, model.glossaryFilter, model.deferred, width);
+    }
+    if (stage === "qa") {
+        return renderQa(project, model.qaSelected, width);
+    }
+    if (stage === "translate") {
+        return renderTranslate(project, job, width);
+    }
+    if (stage === "export") {
+        return renderExport(project, width);
+    }
+    return box(STAGE_LABELS[stage], ["이 단계는 다음 Phase에서 구현됩니다.", "[1] 개요   [Esc] 책장"], width);
+}
+export function renderProject(model, width, _rows) {
+    if (model.route.screen !== "project") {
+        return [];
+    }
+    const stage = model.route.stage;
+    const activeIndex = STAGE_ORDER.indexOf(stage);
+    const items = railItems(model.project);
+    const narrow = width < NARROW_WIDTH;
+    const detailWidth = narrow ? width : width - RAIL_WIDTH - 2;
+    const detail = !model.project
+        ? box(STAGE_LABELS[stage], [model.projectLoading ? "프로젝트를 불러오는 중…" : "프로젝트를 찾을 수 없습니다.", "[Esc] 책장"], detailWidth)
+        : stageDetail(model, stage, model.project, model.job, detailWidth);
+    if (narrow) {
+        return [tabStrip(items, activeIndex, width), "", ...detail];
+    }
+    return row(rail(items, activeIndex, RAIL_WIDTH), RAIL_WIDTH, detail, 2);
+}

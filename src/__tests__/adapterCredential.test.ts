@@ -6,6 +6,10 @@ import { tmpdir } from "node:os";
 import { saveOpenAICompatibleApiKey, loadOpenAICompatibleApiKey, clearOpenAICompatibleApiKey, getCredentialPath } from "../config/credentialStore.js";
 import { getConfigPath, loadConfig } from "../config/configStore.js";
 import { defaultConfig } from "../config/defaultConfig.js";
+import { cycleActiveBackendModel } from "../ui/actions/settingsActions.js";
+import { createProjectAdapter } from "../ui/actions/translationJobActions.js";
+import { createProjectFromText } from "../engine/projectWorkflow.js";
+import { loadProjectMetadata } from "../storage/projectStore.js";
 import { createTranslatorAdapter } from "../translation/adapters/adapterFactory.js";
 import { CodexCliAdapter } from "../translation/adapters/codexCliAdapter.js";
 import { OpenAICompatibleAdapter } from "../translation/adapters/openAICompatibleAdapter.js";
@@ -49,6 +53,54 @@ test("config loading falls back safely for malformed nested values", async () =>
   assert.equal(config.openAICompatible.baseUrl, defaultConfig.openAICompatible.baseUrl);
   assert.equal(config.codexCli.command, defaultConfig.codexCli.command);
   assert.equal(config.logLevel, defaultConfig.logLevel);
+});
+
+test("active backend model cycling updates Codex model for Codex backend", async () => {
+  const configDir = await mkdtemp(join(tmpdir(), "noveltrans-codex-model-config-"));
+  const next = await cycleActiveBackendModel(
+    {
+      ...defaultConfig,
+      defaultBackend: "codex-cli",
+      defaultModel: "old-default-model",
+      codexCli: { ...defaultConfig.codexCli, model: "old-codex-model" }
+    },
+    configDir
+  );
+
+  assert.equal(next.defaultModel, next.codexCli.model);
+  assert.notEqual(next.codexCli.model, "old-codex-model");
+  const persisted = await loadConfig(configDir);
+  assert.equal(persisted.codexCli.model, next.codexCli.model);
+  assert.equal(persisted.defaultModel, next.codexCli.model);
+});
+
+test("v2 job adapter clears legacy OpenAI default model pins from Codex projects", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-codex-legacy-model-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 旧設定", "黒架は歩いた。"].join("\n"),
+    sourceLabel: "inline://legacy-model-test",
+    projectRoot: join(root, "projects"),
+    name: "Legacy Codex Pin",
+    backend: "codex-cli",
+    model: "openai-default-model",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+
+  await createProjectAdapter(created.metadata.projectDir, {
+    config: {
+      ...defaultConfig,
+      defaultBackend: "codex-cli",
+      defaultModel: "openai-default-model",
+      openAICompatible: { ...defaultConfig.openAICompatible, model: "openai-default-model" },
+      codexCli: { ...defaultConfig.codexCli, model: "codex-runtime-model" }
+    }
+  });
+
+  const metadata = await loadProjectMetadata(created.metadata.projectDir);
+  assert.equal(metadata.options.backend, "codex-cli");
+  assert.equal(metadata.options.model, undefined);
 });
 
 test("Codex CLI adapter invokes codex exec and reads the last message file", async () => {

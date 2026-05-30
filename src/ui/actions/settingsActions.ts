@@ -76,6 +76,13 @@ export async function cycleOpenAICompatibleModel(config: NovelTransConfig, confi
   return setOpenAICompatibleModel(config, model, configDir);
 }
 
+export async function cycleActiveBackendModel(config: NovelTransConfig, configDir?: string): Promise<NovelTransConfig> {
+  if (config.defaultBackend === "codex-cli") {
+    return cycleCodexCliModel(config, configDir);
+  }
+  return cycleOpenAICompatibleModel(config, configDir);
+}
+
 export async function setOpenAICompatibleModel(config: NovelTransConfig, model: string, configDir?: string): Promise<NovelTransConfig> {
   const normalized = normalizeModelInput(model);
   const next = {
@@ -99,6 +106,7 @@ export async function setCodexCliModel(config: NovelTransConfig, model: string, 
   const normalized = normalizeModelInput(model);
   const next = {
     ...config,
+    defaultModel: normalized,
     codexCli: {
       ...config.codexCli,
       model: normalized

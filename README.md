@@ -4,7 +4,7 @@ NovelTrans is a TypeScript CLI/TUI tool for translating long-form Japanese novel
 
 It is built for workflows where one source contains many episodes, repeated character names, setting terms, item names, and other glossary-sensitive text. NovelTrans keeps the source, episodes, translation state, glossary candidates, QA issues, logs, and TXT/EPUB exports together in one project directory.
 
-Version: `2.0.4`  
+Version: `2.1.0`<br>
 Status: initial public release
 
 ## Features
@@ -148,10 +148,12 @@ Supported sites:
 Example:
 
 ```bash
-noveltrans import --url https://kakuyomu.jp/works/... --episodes 1-10 --confirm-rights
+noveltrans import --url https://kakuyomu.jp/works/... --episodes 1-10
 ```
 
-Only import public/free episodes that you have the right to process for personal translation work. URL import requires `--confirm-rights`.
+In the TUI, press `N`, paste only the URL, then enter an episode range such as `1-10`, `latest-5`, or `all`. You do not need to append command flags to the URL input.
+
+Only import public/free episodes that you have the right to process for personal translation work.
 
 ## Glossary and QA
 
@@ -191,7 +193,7 @@ noveltrans qa --project projects/my-novel
 noveltrans app [--workspace projects]
 noveltrans bookshelf [--workspace projects]
 noveltrans import --source source.txt [--name Title] [--workspace projects]
-noveltrans import --url https://kakuyomu.jp/works/... --episodes 1-10 --confirm-rights
+noveltrans import --url https://kakuyomu.jp/works/... --episodes 1-10
 noveltrans translate --project projects/title [--backend dry-run] [--model gpt-5.5]
 noveltrans retry --project projects/title
 noveltrans status --project projects/title

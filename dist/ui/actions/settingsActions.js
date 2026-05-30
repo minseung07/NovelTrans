@@ -65,6 +65,12 @@ export async function cycleOpenAICompatibleModel(config, configDir) {
     const model = nextPreset(openAICompatibleModelPresets, config.openAICompatible.model);
     return setOpenAICompatibleModel(config, model, configDir);
 }
+export async function cycleActiveBackendModel(config, configDir) {
+    if (config.defaultBackend === "codex-cli") {
+        return cycleCodexCliModel(config, configDir);
+    }
+    return cycleOpenAICompatibleModel(config, configDir);
+}
 export async function setOpenAICompatibleModel(config, model, configDir) {
     const normalized = normalizeModelInput(model);
     const next = {
@@ -86,6 +92,7 @@ export async function setCodexCliModel(config, model, configDir) {
     const normalized = normalizeModelInput(model);
     const next = {
         ...config,
+        defaultModel: normalized,
         codexCli: {
             ...config.codexCli,
             model: normalized

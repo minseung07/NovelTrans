@@ -1,0 +1,132 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createTheme, setTheme } from "../ui-v2/theme/theme.js";
+import { initModel, type AppModel } from "../ui-v2/state/model.js";
+import { update } from "../ui-v2/state/update.js";
+import { renderOverview, jobSegment } from "../ui-v2/screens/project/overview.js";
+import { renderProject } from "../ui-v2/screens/project/index.js";
+import type { BookshelfModel, BookshelfProject, ProjectUiModel } from "../ui/types.js";
+import type { TranslationSessionSnapshot } from "../engine/translationSession.js";
+import { defaultConfig } from "../config/defaultConfig.js";
+
+setTheme(createTheme(0, false));
+
+function project(title: string): BookshelfProject {
+  return {
+    projectDir: `/projects/${title}`,
+    title,
+    completed: 1,
+    total: 4,
+    failed: 0,
+    running: 0,
+    skipped: 0,
+    qaIssues: 0,
+    candidates: 2,
+    conflicts: 0,
+    txtExists: false,
+    epubExists: false,
+    shelfStatusLabel: "번역 이어가기",
+    nextActionLabel: "[Enter] 계속",
+    statusText: "active",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  };
+}
+
+function model(): AppModel {
+  const projects = [project("알파"), project("베타")];
+  const library: BookshelfModel = {
+    projectRoot: "/projects",
+    continueProject: projects[0]!,
+    allProjects: projects,
+    recentProjects: projects,
+    problemProjects: []
+  };
+  return initModel({ ...defaultConfig, projectRoot: "/projects" }, library);
+}
+
+const snapshot = (over: Partial<TranslationSessionSnapshot> = {}): TranslationSessionSnapshot => ({
+  status: "running",
+  queued: 4,
+  completed: 2,
+  failed: 0,
+  skipped: 0,
+  currentEpisodeTitle: null,
+  activeEpisodeNos: [],
+  activeEpisodeTitles: [],
+  message: null,
+  ...over
+});
+
+function projectModelFixture(): ProjectUiModel {
+  return {
+    overview: { episodeStates: [{}, {}, {}, {}], counts: { pending: 1, running: 0, completed: 2, failed: 1, skipped: 0 } },
+    episodes: [{}, {}, {}, {}],
+    glossaryPulse: { candidates: 3, conflicts: 1 },
+    qaIssues: [{ resolved: false }],
+    nextActions: [{ severity: "warning", message: "용어 충돌 정리", commandHint: "[G] 용어" }],
+    timeline: [{ label: "1화 완료" }]
+  } as unknown as ProjectUiModel;
+}
+
+test("open-selected enters project overview and requests a project load", () => {
+  const [next, effects] = update(model(), { type: "open-selected" });
+  assert.deepEqual(next.route, { screen: "project", projectDir: "/projects/알파", stage: "overview" });
+  assert.equal(next.projectLoading, true);
+  assert.deepEqual(effects, [{ kind: "load-project", projectDir: "/projects/알파" }]);
+});
+
+test("go-stage switches the active stage; back returns to library", () => {
+  let [state] = update(model(), { type: "open-selected" });
+  [state] = update(state, { type: "go-stage", stage: "glossary" });
+  assert.equal(state.route.screen === "project" && state.route.stage, "glossary");
+  [state] = update(state, { type: "back" });
+  assert.deepEqual(state.route, { screen: "library" });
+});
+
+test("start-translate begins a job once; progress persists across stages", () => {
+  let [state, effects] = update(update(model(), { type: "open-selected" })[0], { type: "start-translate", mode: "resume" });
+  assert.equal(state.job?.status, "running");
+  assert.deepEqual(effects, [{ kind: "start-job", projectDir: "/projects/알파", mode: "resume" }]);
+  // A second start while running emits no new effect.
+  [, effects] = update(state, { type: "start-translate", mode: "resume" });
+  assert.deepEqual(effects, []);
+  // Progress updates the job, and it survives a stage switch.
+  [state] = update(state, { type: "job-progress", snapshot: snapshot({ completed: 3 }) });
+  assert.equal(state.job?.completed, 3);
+  [state] = update(state, { type: "go-stage", stage: "qa" });
+  assert.equal(state.job?.completed, 3);
+});
+
+test("job-done updates status and refreshes the open project", () => {
+  let [state] = update(update(model(), { type: "open-selected" })[0], { type: "start-translate", mode: "resume" });
+  const [next, effects] = update(state, { type: "job-done", snapshot: snapshot({ status: "completed", completed: 4 }) });
+  assert.equal(next.job?.status, "completed");
+  assert.deepEqual(effects, [{ kind: "load-project", projectDir: "/projects/알파" }, { kind: "load-library" }]);
+});
+
+test("jobSegment and renderOverview show progress", () => {
+  assert.ok(jobSegment({ kind: "translate", projectDir: "/x", status: "running", queued: 4, completed: 2, failed: 0 }).includes("(50%)"));
+  const lines = renderOverview(projectModelFixture(), { kind: "translate", projectDir: "/x", status: "running", queued: 4, completed: 2, failed: 0 }, 74).join("\n");
+  assert.ok(lines.includes("파이프라인"));
+  assert.ok(lines.includes("지금 할 일"));
+  assert.ok(lines.includes("라이브 잡"));
+  assert.ok(lines.includes("용어 충돌 정리"));
+});
+
+test("renderProject composes the stage rail with the overview detail", () => {
+  let [state] = update(model(), { type: "open-selected" });
+  [state] = update(state, { type: "project-loaded", model: projectModelFixture() });
+  const lines = renderProject(state, 100, 30).join("\n");
+  assert.ok(lines.includes("단계"));
+  assert.ok(lines.includes("개요"));
+  assert.ok(lines.includes("파이프라인"));
+});
+
+test("renderProject collapses the rail to a tab strip on narrow widths", () => {
+  let [state] = update(model(), { type: "open-selected" });
+  [state] = update(state, { type: "project-loaded", model: projectModelFixture() });
+  const narrow = renderProject(state, 60, 30).join("\n");
+  assert.ok(!narrow.includes("단계"));
+  assert.ok(narrow.includes("개요"));
+  assert.ok(narrow.includes("파이프라인"));
+});

@@ -28,7 +28,11 @@ export const paletteCommands = [
     { id: "export-toggle-epub", label: "EPUB 출력 토글", hint: "EPUB 켜기/끄기", requiresProject: true },
     { id: "export-toggle-vertical", label: "세로쓰기 토글", hint: "EPUB 방향", requiresProject: true },
     { id: "export-toggle-appendix", label: "용어집 부록 토글", hint: "부록 포함", requiresProject: true },
+    { id: "export-toggle-afterword", label: "후기 출력 토글", hint: "후기 포함", requiresProject: true },
     { id: "settings-cycle-backend", label: "기본 번역 엔진 변경", hint: "고급 설정", requiresProject: false },
+    { id: "settings-cycle-model", label: "기본 모델 변경", hint: "고급 설정", requiresProject: false },
+    { id: "settings-inc-concurrency", label: "동시 처리 늘리기", hint: "고급 설정", requiresProject: false },
+    { id: "settings-dec-concurrency", label: "동시 처리 줄이기", hint: "고급 설정", requiresProject: false },
     { id: "settings-cycle-strictness", label: "용어집 엄격도 변경", hint: "고급 설정", requiresProject: false }
 ];
 export function filterPaletteCommands(query, hasProject) {
