@@ -11,13 +11,14 @@ export type UiWebImportOptions = {
 type ImportSourceForUiOptions = {
   webImportService?: UiWebImportService;
   webImport?: UiWebImportOptions;
+  userConfirmedRights?: boolean;
 };
 
 export const isWebImportSource = (value: string): boolean => /^https?:\/\//i.test(value.trim());
 
 export const looksLikeTextPath = (value: string): boolean => /\.txt$/i.test(value.trim()) || /^[./~]/.test(value.trim());
 
-function importBaseOptions(config: NovelTransConfig, projectRoot: string) {
+export function importBaseOptions(config: NovelTransConfig, projectRoot: string) {
   return {
     projectRoot,
     backend: config.defaultBackend,
@@ -48,7 +49,7 @@ export async function importSourceForUi(sourceValue: string, config: NovelTransC
     const service = options.webImportService ?? new WebImportService();
     const work = await service.loadWork(request.url);
     const preview = service.buildPreview(work, request.episodes);
-    const imported = await service.importProject(preview, { ...base, userConfirmedRights: true });
+    const imported = await service.importProject(preview, { ...base, userConfirmedRights: Boolean(options.userConfirmedRights) });
     return `웹 프로젝트 생성: ${imported.created.metadata.name} (${imported.created.analysis.episodeCount}화)`;
   }
 

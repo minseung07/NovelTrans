@@ -65,18 +65,18 @@ export function truncate(value: string, width: number): string {
 export function formatRelativeTime(iso: string): string {
   const time = new Date(iso).getTime();
   if (Number.isNaN(time)) {
-    return "unknown";
+    return "알 수 없음";
   }
   const seconds = Math.max(0, Math.round((Date.now() - time) / 1000));
   if (seconds < 60) {
-    return `${seconds}s ago`;
+    return `${seconds}초 전`;
   }
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) {
-    return `${minutes}m ago`;
+    return `${minutes}분 전`;
   }
   const hours = Math.round(minutes / 60);
-  return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
+  return hours < 24 ? `${hours}시간 전` : `${Math.round(hours / 24)}일 전`;
 }
 
 function charCellWidth(char: string): number {

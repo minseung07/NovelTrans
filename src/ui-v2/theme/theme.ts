@@ -18,7 +18,8 @@ interface Theme {
   bold(text: string): string;
   severity(level: Severity, text: string): string;
   focus(text: string): string;
-  badge(level: Severity): string;
+  severityGlyph(level: Severity): string;
+  spinnerFrames: string[];
   progressFull: string;
   progressEmpty: string;
 }
@@ -32,6 +33,14 @@ const SEVERITY_CODES: Record<Severity, { c256: number; basic: number }> = {
 
 const UNICODE_BOX: BoxChars = { tl: "╭", tr: "╮", bl: "╰", br: "╯", h: "─", v: "│" };
 const ASCII_BOX: BoxChars = { tl: "+", tr: "+", bl: "+", br: "+", h: "-", v: "|" };
+
+// Shape-distinct glyphs so severity reads without relying on color.
+const SEVERITY_GLYPHS: Record<Severity, { unicode: string; ascii: string }> = {
+  info: { unicode: "●", ascii: "*" },
+  warning: { unicode: "▲", ascii: "!" },
+  critical: { unicode: "×", ascii: "x" },
+  success: { unicode: "✓", ascii: "+" }
+};
 
 export function createTheme(colorLevel: ColorLevel, unicode: boolean): Theme {
   const on = colorLevel > 0;
@@ -47,11 +56,8 @@ export function createTheme(colorLevel: ColorLevel, unicode: boolean): Theme {
       return fg256(on, colorLevel, code.c256, code.basic, text);
     },
     focus: (text) => sgr(on, [7], text),
-    badge: (level) => {
-      const dot = unicode ? "●" : "*";
-      const code = SEVERITY_CODES[level];
-      return fg256(on, colorLevel, code.c256, code.basic, dot);
-    },
+    severityGlyph: (level) => (unicode ? SEVERITY_GLYPHS[level].unicode : SEVERITY_GLYPHS[level].ascii),
+    spinnerFrames: unicode ? ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] : ["|", "/", "-", "\\"],
     progressFull: unicode ? "█" : "#",
     progressEmpty: unicode ? "░" : "-"
   };

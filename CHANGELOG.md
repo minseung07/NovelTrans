@@ -2,6 +2,26 @@
 
 All notable changes to NovelTrans will be documented in this file.
 
+## [2.1.2] - 2026-05-30
+
+### Added
+
+- Added a v2 web-import consent step with import duration guidance and live progress tracking.
+- Added v2 settings inputs for storing the OpenAI-compatible API key and updating the API base URL.
+- Added animated job feedback for export, web import, and translation status updates.
+
+### Changed
+
+- Made v2 status messages carry severity so success, warning, and critical feedback render distinctly.
+- Reworked severity badges to use shape-distinct glyphs that remain readable without color, with a smaller critical glyph.
+- Localized v2 breadcrumb and relative-time chrome into Korean.
+
+### Fixed
+
+- Warned before dry-run translation starts so users do not accidentally generate placeholder output.
+- Replaced silent duplicate translation starts with visible warning feedback.
+- Added an overflow indicator when v2 content exceeds the terminal viewport.
+
 ## [2.1.1] - 2026-05-30
 
 ### Changed

@@ -5,12 +5,18 @@
 import type { NovelTransConfig } from "../../domain/config.js";
 import type { BookshelfModel, GlossaryQueueFilter, ProjectUiModel } from "../../ui/types.js";
 import type { TranslationSessionStatus } from "../../engine/translationSession.js";
+import type { Severity } from "../theme/theme.js";
+
+export interface AppMessage {
+  text: string;
+  level: Severity;
+}
 
 export type Stage = "overview" | "source" | "translate" | "glossary" | "qa" | "export";
 
 type Route = { screen: "library" } | { screen: "project"; projectDir: string; stage: Stage };
 
-type JobKind = "translate" | "retry";
+type JobKind = "translate" | "retry" | "export" | "web-import";
 
 export interface Job {
   kind: JobKind;
@@ -23,9 +29,10 @@ export interface Job {
 
 type InputState =
   | {
-      kind: "glossary-edit" | "import";
+      kind: "glossary-edit" | "import" | "api-key" | "base-url";
       label: string;
       value: string;
+      mask?: boolean;
     }
   | {
       kind: "web-import-episodes";
@@ -38,7 +45,11 @@ export type ConfirmAction =
   | "skip-export"
   | "retry-failed"
   | "export-all"
+  | "export-configured"
   | "source-reimport"
+  | "web-import"
+  | "dry-run-resume"
+  | "dry-run-retry"
   | "review-ignore"
   | "review-retranslate"
   | "review-retranslate-all"
@@ -67,7 +78,9 @@ export interface AppModel {
   sourceSelected: number;
   input: InputState | null;
   overlay: Overlay | null;
-  message: string | null;
+  message: AppMessage | null;
+  tick: number;
+  dryRunAcknowledged: boolean;
 }
 
 export function initModel(config: NovelTransConfig, library: BookshelfModel): AppModel {
@@ -88,6 +101,8 @@ export function initModel(config: NovelTransConfig, library: BookshelfModel): Ap
     sourceSelected: 0,
     input: null,
     overlay: null,
-    message: null
+    message: null,
+    tick: 0,
+    dryRunAcknowledged: false
   };
 }

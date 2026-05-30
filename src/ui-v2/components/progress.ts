@@ -13,3 +13,8 @@ export function progressLine(percent: number, width = 16): string {
   const clamped = Math.max(0, Math.min(100, Math.round(percent)));
   return `${progressBar(clamped, width)} ${clamped}%`;
 }
+
+export function spinnerFrame(tick: number): string {
+  const frames = getTheme().spinnerFrames;
+  return frames[Math.abs(Math.floor(tick)) % frames.length] ?? frames[0]!;
+}

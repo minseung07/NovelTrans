@@ -35,9 +35,10 @@ export function renderSettings(config: NovelTransConfig, width: number): string[
       `번역 스타일: ${config.translationStyle}`,
       `용어 엄격도: ${config.glossaryStrictness}`,
       `출력: ${config.outputFormats.join("+").toUpperCase()}`,
-      "API 키: 환경 변수 또는 auth 명령으로 설정",
+      `API 키: [k]로 입력 (로컬 파일에 저장)`,
+      `Base URL: ${config.openAICompatible.baseUrl}`,
       "",
-      "[b]엔진 [m]모델 [g]엄격도 [+/-]동시성 [t]TXT [e]EPUB [Esc]닫기"
+      "[b]엔진 [m]모델 [g]엄격도 [+/-]동시성 [t]TXT [e]EPUB [k]API키 [u]BaseURL [Esc]닫기"
     ],
     width
   );

@@ -5,7 +5,7 @@ import type { ProjectUiModel } from "../../../ui/types.js";
 import type { Job } from "../../state/model.js";
 import type { TranslationSessionStatus } from "../../../engine/translationSession.js";
 import { box } from "../../components/box.js";
-import { progressLine } from "../../components/progress.js";
+import { progressLine, spinnerFrame } from "../../components/progress.js";
 import { severityBadge } from "../../components/badge.js";
 import { stack } from "../../components/geometry.js";
 
@@ -25,8 +25,10 @@ export function jobPercent(job: Job): number {
   return job.queued > 0 ? Math.round((job.completed / job.queued) * 100) : job.status === "completed" ? 100 : 0;
 }
 
-export function jobSegment(job: Job): string {
-  return `잡 ${jobStatusLabel(job.status)} ${job.completed}/${job.queued} (${jobPercent(job)}%)`;
+export function jobSegment(job: Job, tick = 0): string {
+  const spin = job.status === "running" ? `${spinnerFrame(tick)} ` : "";
+  const counts = job.queued > 0 ? ` ${job.completed}/${job.queued} (${jobPercent(job)}%)` : "";
+  return `${spin}잡 ${jobStatusLabel(job.status)}${counts}`;
 }
 
 function pipelineCard(project: ProjectUiModel, width: number): string[] {

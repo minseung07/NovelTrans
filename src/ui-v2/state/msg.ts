@@ -4,6 +4,7 @@ import type { NovelTransConfig } from "../../domain/config.js";
 import type { BookshelfModel, GlossaryQueueFilter, ProjectUiModel } from "../../ui/types.js";
 import type { TranslationSessionSnapshot } from "../../engine/translationSession.js";
 import type { Overlay, Stage } from "./model.js";
+import type { Severity } from "../theme/theme.js";
 
 type GlossaryOp = "confirm" | "lock" | "forbid" | "discard";
 type QaOp = "ignore" | "recheck" | "retranslate";
@@ -20,6 +21,7 @@ export type Msg =
   | { type: "export-toggle"; what: ExportToggle }
   | { type: "export-generate" }
   | { type: "settings-op"; op: SettingsOp }
+  | { type: "settings-edit"; field: "api-key" | "base-url" }
   | { type: "start-search" }
   | { type: "search-char"; value: string }
   | { type: "search-backspace" }
@@ -48,8 +50,12 @@ export type Msg =
   | { type: "project-load-failed"; message: string }
   | { type: "library-loaded"; model: BookshelfModel }
   | { type: "config-updated"; config: NovelTransConfig }
-  | { type: "action-done"; message: string }
+  | { type: "action-done"; message: string; level?: Severity }
   | { type: "clear-message" }
   | { type: "job-progress"; snapshot: TranslationSessionSnapshot }
   | { type: "job-done"; snapshot: TranslationSessionSnapshot }
-  | { type: "job-failed"; message: string };
+  | { type: "job-failed"; message: string }
+  | { type: "job-clear" }
+  | { type: "web-import-previewed"; consent: string }
+  | { type: "import-progress"; completed: number; total: number }
+  | { type: "tick" };

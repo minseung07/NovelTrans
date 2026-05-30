@@ -59,6 +59,10 @@ function isEffect(mapping: Exclude<PaletteMapping, null | { confirm: ConfirmActi
   return "kind" in mapping;
 }
 
+function previewWebImport(model: AppModel, url: string, episodes: string): [AppModel, Effect[]] {
+  return [{ ...model, input: null, message: { text: "작품 정보를 불러오는 중…", level: "info" } }, [{ kind: "web-import-preview", url, episodes }]];
+}
+
 function submitImportSource(model: AppModel, sourceValue: string): [AppModel, Effect[]] {
   const source = sourceValue.trim();
   if (!source) {
@@ -85,8 +89,7 @@ function submitImportSource(model: AppModel, sourceValue: string): [AppModel, Ef
     ];
   }
 
-  const selection = { url: request.url, episodes: request.episodes };
-  return [{ ...model, input: null }, [{ kind: "import", source: selection.url, webImport: { episodes: selection.episodes } }]];
+  return previewWebImport(model, request.url, request.episodes);
 }
 
 // Maps a palette command id to a message, effect, confirm action, or null.
@@ -167,12 +170,24 @@ function paletteMapping(model: AppModel, id: string): PaletteMapping {
   }
 }
 
+function startExport(model: AppModel, projectDir: string, mode: "configured" | "all"): [AppModel, Effect[]] {
+  if (model.job && (model.job.status === "running" || model.job.status === "paused")) {
+    return [{ ...model, overlay: null, message: { text: "다른 작업이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+  }
+  const job: Job = { kind: "export", projectDir, status: "running", queued: 0, completed: 0, failed: 0 };
+  return [{ ...model, overlay: null, job }, [{ kind: "export", projectDir, mode }]];
+}
+
 function runConfirm(model: AppModel): [AppModel, Effect[]] {
   if (model.overlay?.kind !== "confirm") {
     return [model, []];
   }
   const { action } = model.overlay;
   const cleared = { ...model, overlay: null };
+  if (action === "web-import") {
+    const job: Job = { kind: "web-import", projectDir: "", status: "running", queued: 0, completed: 0, failed: 0 };
+    return [{ ...cleared, job }, [{ kind: "web-import-run" }]];
+  }
   if (model.route.screen !== "project") {
     return [cleared, []];
   }
@@ -180,13 +195,19 @@ function runConfirm(model: AppModel): [AppModel, Effect[]] {
     return [cleared, [{ kind: "skip-export", projectDir: model.route.projectDir }]];
   }
   if (action === "export-all") {
-    return [cleared, [{ kind: "export", projectDir: model.route.projectDir, mode: "all" }]];
+    return startExport(model, model.route.projectDir, "all");
+  }
+  if (action === "export-configured") {
+    return startExport(model, model.route.projectDir, "configured");
   }
   if (action === "source-reimport") {
     return [cleared, model.project ? [{ kind: "import", source: model.project.sourceStatus.sourcePath }] : []];
   }
   if (action === "retry-failed") {
     return update(cleared, { type: "start-translate", mode: "retry-failed" });
+  }
+  if (action === "dry-run-resume" || action === "dry-run-retry") {
+    return update({ ...cleared, dryRunAcknowledged: true }, { type: "start-translate", mode: action === "dry-run-retry" ? "retry-failed" : "resume" });
   }
   if (action === "review-ignore") {
     return update(cleared, { type: "qa-op", op: "ignore" });
@@ -238,7 +259,10 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
         return [model, []];
       }
       if (model.job && (model.job.status === "running" || model.job.status === "paused")) {
-        return [model, []];
+        return [{ ...model, message: { text: "이미 번역이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+      }
+      if (model.config.defaultBackend === "dry-run" && !model.dryRunAcknowledged) {
+        return [{ ...model, overlay: { kind: "confirm", message: "dry-run 백엔드는 실제 번역이 아니라 자리표시자 텍스트를 만듭니다. 계속할까요? (설정에서 엔진을 바꿀 수 있습니다)", action: msg.mode === "retry-failed" ? "dry-run-retry" : "dry-run-resume" } }, []];
       }
       const { projectDir } = model.route;
       const job: Job = { kind: msg.mode === "retry-failed" ? "retry" : "translate", projectDir, status: "running", queued: 0, completed: 0, failed: 0 };
@@ -249,9 +273,13 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
     case "export-toggle":
       return model.route.screen === "project" ? [model, [{ kind: "export-toggle", projectDir: model.route.projectDir, what: msg.what }]] : [model, []];
     case "export-generate":
-      return model.route.screen === "project" ? [model, [{ kind: "export", projectDir: model.route.projectDir, mode: "configured" }]] : [model, []];
+      return model.route.screen === "project" ? startExport(model, model.route.projectDir, "configured") : [model, []];
     case "settings-op":
       return [model, [{ kind: "config", op: msg.op }]];
+    case "settings-edit":
+      return msg.field === "api-key"
+        ? [{ ...model, input: { kind: "api-key", label: "OpenAI 호환 API 키", value: "", mask: true } }, []]
+        : [{ ...model, input: { kind: "base-url", label: "API base URL (https://...)", value: model.config.openAICompatible.baseUrl } }, []];
     case "glossary-filter": {
       const order: GlossaryQueueFilter[] = ["all", "conflicts", "candidates"];
       const next = order[(order.indexOf(model.glossaryFilter) + 1) % order.length]!;
@@ -279,7 +307,7 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
         return [model, []];
       }
       if (!looksLikeTextPath(model.project.sourceStatus.sourcePath)) {
-        return [{ ...model, message: "원문 다시 가져오기는 로컬 TXT 원본에만 지원됩니다." }, [{ kind: "dismiss" }]];
+        return [{ ...model, message: { text: "원문 다시 가져오기는 로컬 TXT 원본에만 지원됩니다.", level: "warning" } }, [{ kind: "dismiss" }]];
       }
       return [{ ...model, overlay: { kind: "confirm", message: "현재 원문 파일로 새 프로젝트를 다시 만들까요?", action: "source-reimport" } }, []];
     }
@@ -301,9 +329,21 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
       if (model.input.kind === "web-import-episodes") {
         const episodes = model.input.value.trim();
         if (!episodes) {
-          return [{ ...model, message: "화수 범위를 입력하세요. 예: 1-10, latest-5, all" }, [{ kind: "dismiss" }]];
+          return [{ ...model, message: { text: "화수 범위를 입력하세요. 예: 1-10, latest-5, all", level: "warning" } }, [{ kind: "dismiss" }]];
         }
-        return [{ ...model, input: null }, [{ kind: "import", source: model.input.url, webImport: { episodes } }]];
+        return previewWebImport(model, model.input.url, episodes);
+      }
+      if (model.input.kind === "api-key") {
+        const apiKey = model.input.value.trim();
+        return apiKey
+          ? [{ ...model, input: null }, [{ kind: "save-api-key", apiKey }]]
+          : [{ ...model, input: null, message: { text: "API 키가 비어 있습니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+      }
+      if (model.input.kind === "base-url") {
+        const baseUrl = model.input.value.trim();
+        return /^https:\/\//i.test(baseUrl)
+          ? [{ ...model, input: null }, [{ kind: "save-base-url", baseUrl }]]
+          : [{ ...model, input: null, message: { text: "base URL은 https:// 로 시작해야 합니다.", level: "warning" } }, [{ kind: "dismiss" }]];
       }
       const target = model.input.value;
       return [{ ...model, input: null }, glossaryEffect(model, "confirm", target)];
@@ -347,15 +387,23 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
     case "project-loaded":
       return [{ ...model, project: msg.model, projectLoading: false }, []];
     case "project-load-failed":
-      return [{ ...model, projectLoading: false, message: msg.message }, [{ kind: "dismiss" }]];
+      return [{ ...model, projectLoading: false, message: { text: msg.message, level: "critical" } }, [{ kind: "dismiss" }]];
     case "library-loaded":
       return [{ ...model, library: msg.model }, []];
     case "config-updated":
       return [{ ...model, config: msg.config }, []];
     case "action-done":
-      return [{ ...model, message: msg.message }, [{ kind: "dismiss" }]];
+      return [{ ...model, message: { text: msg.message, level: msg.level ?? "info" } }, [{ kind: "dismiss" }]];
     case "clear-message":
       return [{ ...model, message: null }, []];
+    case "job-clear":
+      return [{ ...model, job: null }, []];
+    case "web-import-previewed":
+      return [{ ...model, overlay: { kind: "confirm", message: msg.consent, action: "web-import" }, message: null }, []];
+    case "import-progress":
+      return [{ ...model, job: model.job ? { ...model.job, queued: msg.total, completed: msg.completed } : model.job }, []];
+    case "tick":
+      return [{ ...model, tick: model.tick + 1 }, []];
     case "job-progress":
       return [{ ...model, job: jobFromSnapshot(model.job, msg.snapshot) }, []];
     case "job-done": {
@@ -365,7 +413,7 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
     }
     case "job-failed": {
       const effects: Effect[] = model.route.screen === "project" ? [{ kind: "load-project", projectDir: model.route.projectDir }, { kind: "load-library" }, { kind: "dismiss" }] : [{ kind: "load-library" }, { kind: "dismiss" }];
-      return [{ ...model, job: model.job ? { ...model.job, status: "failed" } : model.job, message: msg.message }, effects];
+      return [{ ...model, job: model.job ? { ...model.job, status: "failed" } : model.job, message: { text: msg.message, level: "critical" } }, effects];
     }
     case "start-search":
       return [{ ...model, searching: true }, []];

@@ -107,8 +107,8 @@ test("import input accepts bracketed paste text for URLs", () => {
 
   [model] = update(model, messages[0]!);
   const [, effects] = update(model, { type: "input-submit" });
-  assert.equal(effects[0]?.kind === "import" && effects[0].source, "https://kakuyomu.jp/works/123");
-  assert.deepEqual(effects[0]?.kind === "import" && effects[0].webImport, { episodes: "1" });
+  assert.equal(effects[0]?.kind === "web-import-preview" && effects[0].url, "https://kakuyomu.jp/works/123");
+  assert.equal(effects[0]?.kind === "web-import-preview" && effects[0].episodes, "1");
 });
 
 test("URL import collects episodes as an option and defaults rights confirmation", () => {
@@ -125,8 +125,8 @@ test("URL import collects episodes as an option and defaults rights confirmation
   [model, effects] = update(model, { type: "input-submit" });
   assert.equal(model.input, null);
   assert.equal(model.overlay, null);
-  assert.equal(effects[0]?.kind === "import" && effects[0].source, "https://kakuyomu.jp/works/123");
-  assert.deepEqual(effects[0]?.kind === "import" && effects[0].webImport, { episodes: "latest-5" });
+  assert.equal(effects[0]?.kind === "web-import-preview" && effects[0].url, "https://kakuyomu.jp/works/123");
+  assert.equal(effects[0]?.kind === "web-import-preview" && effects[0].episodes, "latest-5");
 });
 
 test("export toggle and generate emit effects", () => {
@@ -139,7 +139,8 @@ test("export toggle and generate emit effects", () => {
 test("job failure exposes the backend error and refreshes project and library data", () => {
   const running: AppModel = { ...projectModel("translate"), job: { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } };
   const [next, effects] = update(running, { type: "job-failed", message: "OPENAI_API_KEY is not set." });
-  assert.equal(next.message, "OPENAI_API_KEY is not set.");
+  assert.equal(next.message?.text, "OPENAI_API_KEY is not set.");
+  assert.equal(next.message?.level, "critical");
   assert.equal(next.job?.status, "failed");
   assert.deepEqual(
     effects.map((effect) => effect.kind),

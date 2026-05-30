@@ -50,6 +50,6 @@ test("re-import on a TXT source confirms, then emits an import effect", () => {
 test("re-import on a non-file source is rejected with a message", () => {
   const [m, effects] = update(model("inline://noveltrans"), { type: "source-reimport" });
   assert.equal(m.overlay, null);
-  assert.ok(m.message?.includes("로컬 TXT"));
+  assert.ok(m.message?.text.includes("로컬 TXT"));
   assert.equal(effects[0]?.kind, "dismiss");
 });

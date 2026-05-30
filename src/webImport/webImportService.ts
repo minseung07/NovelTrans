@@ -7,6 +7,7 @@ import { parseEpisodeRange, selectEpisodeRange } from "./episodeRange.js";
 import { WebHttpClient, type WebHttpClientOptions } from "./httpClient.js";
 import { detectWebImportUrl, isAllowedWebImportFetchUrl } from "./urlDetector.js";
 import type {
+  EpisodeRangeSelection,
   WebEpisode,
   WebEpisodeRef,
   WebImportAdapter,
@@ -107,6 +108,31 @@ function composeWebSourceText(episodes: WebEpisode[]): string {
       return parts.join("\n").trim();
     })
     .join("\n\n");
+}
+
+export function webImportConsentMessage(work: WebWorkIndex, selection: EpisodeRangeSelection, count: number): string {
+  const siteLabel = work.site === "syosetu" ? "소설가가 되자" : "카쿠요무";
+  const caution =
+    work.site === "syosetu"
+      ? "소설가가 되자는 본문 기계 취득에 관한 운영상 제한이 있을 수 있습니다."
+      : "카쿠요무는 과도한 부하를 주는 이용을 제한할 수 있습니다.";
+  return [
+    `${siteLabel}에서 ${selection.label} (${count}화)를 저속으로 가져옵니다.`,
+    `예상 최소 시간: ${formatApproxDuration(count * 1500)} 이상. 진행률은 가져오는 동안 계속 표시됩니다.`,
+    caution,
+    "공개 무료 회차만, 개인 번역 작업을 위한 범위에서 진행하세요.",
+    "[Y] 동의하고 가져오기   [N] 취소"
+  ].join("\n");
+}
+
+function formatApproxDuration(ms: number): string {
+  const seconds = Math.max(1, Math.ceil(ms / 1000));
+  if (seconds < 60) {
+    return `약 ${seconds}초`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return remainder > 0 ? `약 ${minutes}분 ${remainder}초` : `약 ${minutes}분`;
 }
 
 function episodeHeading(episode: WebEpisode): string {

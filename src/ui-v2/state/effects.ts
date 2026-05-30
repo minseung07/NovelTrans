@@ -19,8 +19,12 @@ import {
 import { toggleOutputFormat, toggleGlossaryAppendix, toggleAfterword, toggleVerticalWriting, generateConfiguredExports, generateAllExports } from "../../ui/actions/exportActions.js";
 import { errorLogPath, skipFailedAndExport } from "../../ui/actions/failureActions.js";
 import { cycleActiveBackendModel, cycleDefaultBackend, cycleGlossaryStrictness, adjustConcurrency, toggleDefaultOutputFormat } from "../../ui/actions/settingsActions.js";
-import { importSourceForUi, type UiWebImportOptions } from "../../ui/actions/importActions.js";
+import { importSourceForUi, importBaseOptions, type UiWebImportOptions } from "../../ui/actions/importActions.js";
+import { WebImportService, webImportConsentMessage } from "../../webImport/webImportService.js";
+import type { WebImportPreview } from "../../webImport/types.js";
 import { createProjectAdapter, createProjectTranslationSession } from "../../ui/actions/translationJobActions.js";
+import { saveOpenAICompatibleApiKey } from "../../config/credentialStore.js";
+import { saveConfig } from "../../config/configStore.js";
 import { loadProjectUiModel } from "../data/project.js";
 import { loadBookshelfModel } from "../data/library.js";
 import type { Msg, SettingsOp, ExportToggle } from "./msg.js";
@@ -43,7 +47,11 @@ export type Effect =
   | { kind: "export"; projectDir: string; mode: "configured" | "all" }
   | { kind: "skip-export"; projectDir: string }
   | { kind: "import"; source: string; webImport?: UiWebImportOptions }
+  | { kind: "web-import-preview"; url: string; episodes: string }
+  | { kind: "web-import-run" }
   | { kind: "config"; op: SettingsOp }
+  | { kind: "save-api-key"; apiKey: string }
+  | { kind: "save-base-url"; baseUrl: string }
   | { kind: "dismiss" };
 
 interface EffectDeps {
@@ -53,6 +61,7 @@ interface EffectDeps {
 }
 
 const POLL_INTERVAL_MS = 200;
+const TICK_INTERVAL_MS = 120;
 
 export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch: Dispatch<Msg>) => void | (() => void) {
   let session: TranslationSession | null = null;
@@ -64,6 +73,18 @@ export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch:
       poll = null;
     }
   };
+  let ticker: NodeJS.Timeout | null = null;
+  const stopTicker = () => {
+    if (ticker) {
+      clearInterval(ticker);
+      ticker = null;
+    }
+  };
+  const startTicker = (dispatch: Dispatch<Msg>) => {
+    stopTicker();
+    ticker = setInterval(() => dispatch({ type: "tick" }), TICK_INTERVAL_MS);
+  };
+  let pendingWebImport: WebImportPreview | null = null;
   const runtime = () => ({ config: currentConfig, configDir: deps.configDir });
 
   const refreshProject = async (projectDir: string, dispatch: Dispatch<Msg>) => {
@@ -78,9 +99,9 @@ export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch:
         const message = await run();
         await refreshProject(projectDir, dispatch);
         await refreshLibrary(dispatch);
-        dispatch({ type: "action-done", message });
+        dispatch({ type: "action-done", message, level: "success" });
       } catch (error) {
-        dispatch({ type: "action-done", message: (error as Error).message });
+        dispatch({ type: "action-done", message: (error as Error).message, level: "critical" });
       }
     })();
   };
@@ -184,14 +205,27 @@ export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch:
           await refreshProject(effect.projectDir, dispatch);
           await refreshLibrary(dispatch);
         } catch (error) {
-          dispatch({ type: "action-done", message: (error as Error).message });
+          dispatch({ type: "action-done", message: (error as Error).message, level: "critical" });
         }
       })();
       return;
     }
     if (effect.kind === "export") {
-      runAndRefresh(effect.projectDir, () => (effect.mode === "all" ? generateAllExports(effect.projectDir) : generateConfiguredExports(effect.projectDir)), dispatch);
-      return;
+      startTicker(dispatch);
+      void (async () => {
+        try {
+          const message = await (effect.mode === "all" ? generateAllExports(effect.projectDir) : generateConfiguredExports(effect.projectDir));
+          await refreshProject(effect.projectDir, dispatch);
+          await refreshLibrary(dispatch);
+          dispatch({ type: "action-done", message, level: "success" });
+        } catch (error) {
+          dispatch({ type: "action-done", message: (error as Error).message, level: "critical" });
+        } finally {
+          stopTicker();
+          dispatch({ type: "job-clear" });
+        }
+      })();
+      return stopTicker;
     }
     if (effect.kind === "skip-export") {
       runAndRefresh(effect.projectDir, () => skipFailedAndExport(effect.projectDir), dispatch);
@@ -202,9 +236,73 @@ export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch:
         try {
           const message = await importSourceForUi(effect.source, currentConfig, deps.projectRoot, { webImport: effect.webImport });
           await refreshLibrary(dispatch);
-          dispatch({ type: "action-done", message });
+          dispatch({ type: "action-done", message, level: "success" });
         } catch (error) {
-          dispatch({ type: "action-done", message: (error as Error).message });
+          dispatch({ type: "action-done", message: (error as Error).message, level: "critical" });
+        }
+      })();
+      return;
+    }
+    if (effect.kind === "web-import-preview") {
+      void (async () => {
+        try {
+          const service = new WebImportService();
+          const work = await service.loadWork(effect.url);
+          const preview = service.buildPreview(work, effect.episodes);
+          pendingWebImport = preview;
+          dispatch({ type: "web-import-previewed", consent: webImportConsentMessage(work, preview.selection, preview.selectedEpisodes.length) });
+        } catch (error) {
+          dispatch({ type: "action-done", message: (error as Error).message, level: "critical" });
+        }
+      })();
+      return;
+    }
+    if (effect.kind === "web-import-run") {
+      const preview = pendingWebImport;
+      pendingWebImport = null;
+      if (!preview) {
+        dispatch({ type: "job-clear" });
+        return;
+      }
+      startTicker(dispatch);
+      void (async () => {
+        try {
+          const service = new WebImportService();
+          const base = importBaseOptions(currentConfig, deps.projectRoot);
+          const result = await service.importProject(preview, { ...base, userConfirmedRights: true }, (event) =>
+            dispatch({ type: "import-progress", completed: event.completed, total: event.total })
+          );
+          await refreshLibrary(dispatch);
+          dispatch({ type: "action-done", message: `웹 프로젝트 생성: ${result.created.metadata.name} (${result.created.analysis.episodeCount}화)`, level: "success" });
+        } catch (error) {
+          dispatch({ type: "action-done", message: (error as Error).message, level: "critical" });
+        } finally {
+          stopTicker();
+          dispatch({ type: "job-clear" });
+        }
+      })();
+      return stopTicker;
+    }
+    if (effect.kind === "save-api-key") {
+      void (async () => {
+        try {
+          await saveOpenAICompatibleApiKey(effect.apiKey, deps.configDir);
+          dispatch({ type: "action-done", message: "API 키를 저장했습니다.", level: "success" });
+        } catch (error) {
+          dispatch({ type: "action-done", message: (error as Error).message, level: "critical" });
+        }
+      })();
+      return;
+    }
+    if (effect.kind === "save-base-url") {
+      void (async () => {
+        try {
+          currentConfig = { ...currentConfig, openAICompatible: { ...currentConfig.openAICompatible, baseUrl: effect.baseUrl } };
+          await saveConfig(currentConfig, deps.configDir);
+          dispatch({ type: "config-updated", config: currentConfig });
+          dispatch({ type: "action-done", message: "base URL을 저장했습니다.", level: "success" });
+        } catch (error) {
+          dispatch({ type: "action-done", message: (error as Error).message, level: "critical" });
         }
       })();
       return;
@@ -215,7 +313,7 @@ export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch:
           currentConfig = await runConfig(effect.op, currentConfig);
           dispatch({ type: "config-updated", config: currentConfig });
         } catch (error) {
-          dispatch({ type: "action-done", message: (error as Error).message });
+          dispatch({ type: "action-done", message: (error as Error).message, level: "critical" });
         }
       })();
       return;
@@ -244,6 +342,7 @@ export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch:
         poll = setInterval(() => {
           if (session) {
             dispatch({ type: "job-progress", snapshot: session.snapshot() });
+            dispatch({ type: "tick" });
           }
         }, POLL_INTERVAL_MS);
         const snapshot = await done;

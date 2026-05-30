@@ -41,7 +41,7 @@ function model(): AppModel {
     recentProjects: projects,
     problemProjects: []
   };
-  return initModel({ ...defaultConfig, projectRoot: "/projects" }, library);
+  return { ...initModel({ ...defaultConfig, projectRoot: "/projects" }, library), dryRunAcknowledged: true };
 }
 
 const snapshot = (over: Partial<TranslationSessionSnapshot> = {}): TranslationSessionSnapshot => ({
@@ -87,9 +87,10 @@ test("start-translate begins a job once; progress persists across stages", () =>
   let [state, effects] = update(update(model(), { type: "open-selected" })[0], { type: "start-translate", mode: "resume" });
   assert.equal(state.job?.status, "running");
   assert.deepEqual(effects, [{ kind: "start-job", projectDir: "/projects/알파", mode: "resume" }]);
-  // A second start while running emits no new effect.
-  [, effects] = update(state, { type: "start-translate", mode: "resume" });
-  assert.deepEqual(effects, []);
+  // A second start while running gives feedback (dismiss) instead of a new job.
+  [state, effects] = update(state, { type: "start-translate", mode: "resume" });
+  assert.deepEqual(effects, [{ kind: "dismiss" }]);
+  assert.equal(state.message?.level, "warning");
   // Progress updates the job, and it survives a stage switch.
   [state] = update(state, { type: "job-progress", snapshot: snapshot({ completed: 3 }) });
   assert.equal(state.job?.completed, 3);

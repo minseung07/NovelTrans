@@ -7,7 +7,7 @@ import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 import type { ReadStream, WriteStream } from "node:tty";
 import type { NovelTransConfig } from "../domain/config.js";
 import { resolveProjectRoot } from "../config/configStore.js";
-import { createTheme, setTheme } from "./theme/theme.js";
+import { createTheme, setTheme, getTheme } from "./theme/theme.js";
 import { detectColorLevel, detectUnicode } from "./theme/capabilities.js";
 import { createTerminal } from "./runtime/terminal.js";
 import { runProgram } from "./runtime/loop.js";
@@ -44,7 +44,7 @@ function contentWidth(size: TerminalSize): number {
 
 function statusParts(model: AppModel): string[] {
   const meta = [`백엔드 ${model.config.defaultBackend}`, `모델 ${model.config.defaultModel}`, `동시 ${model.config.concurrency}`];
-  const job = model.job ? [jobSegment(model.job)] : [];
+  const job = model.job ? [jobSegment(model.job, model.tick)] : [];
   return [...meta, ...job, ...contextHints(model.route.screen)];
 }
 
@@ -59,13 +59,16 @@ function renderOverlay(model: AppModel, width: number): string[] {
   if (overlay.kind === "palette") {
     return renderPalette(overlay.query, overlay.selected, model.route.screen === "project", width);
   }
-  return modal("확인", [overlay.message, "", "[Y] 예   [N] 아니오"], width);
+  const lines = overlay.message.split("\n");
+  return modal("확인", overlay.message.includes("[Y]") ? lines : [...lines, "", "[Y] 예   [N] 아니오"], width);
 }
 
 function bodyLines(model: AppModel, size: TerminalSize): string[] {
   const width = contentWidth(size);
   if (model.input) {
-    return modal(model.input.label, [`${model.input.value}▌`, "", "[Enter] 확정   [Esc] 취소"], width);
+    const masked = "mask" in model.input && model.input.mask === true;
+    const shown = masked ? "•".repeat([...model.input.value].length) : model.input.value;
+    return modal(model.input.label, [`${shown}▌`, "", "[Enter] 확정   [Esc] 취소"], width);
   }
   if (model.overlay) {
     return renderOverlay(model, width);
@@ -75,18 +78,22 @@ function bodyLines(model: AppModel, size: TerminalSize): string[] {
 
 function crumbs(model: AppModel): string[] {
   if (model.route.screen === "library") {
-    return ["Library"];
+    return ["책장"];
   }
-  return ["Library", projectOf(model)?.title ?? "프로젝트", STAGE_LABELS[model.route.stage]];
+  return ["책장", projectOf(model)?.title ?? "프로젝트", STAGE_LABELS[model.route.stage]];
 }
 
-function view(model: AppModel, size: TerminalSize): string {
+export function view(model: AppModel, size: TerminalSize): string {
   const reserved = Math.max(1, size.rows - 2);
-  const lines = [breadcrumb(crumbs(model)), "", ...bodyLines(model, size)].map((line) => truncate(line, size.cols)).slice(0, reserved);
+  const composed = [breadcrumb(crumbs(model)), "", ...bodyLines(model, size)].map((line) => truncate(line, size.cols));
+  const lines = composed.slice(0, reserved);
+  if (composed.length > reserved && lines.length > 0) {
+    lines[lines.length - 1] = truncate(getTheme().muted("↓ 더 있음"), size.cols);
+  }
   while (lines.length < reserved) {
     lines.push("");
   }
-  lines.push(truncate(model.message ? severityBadge("info", model.message) : "", size.cols));
+  lines.push(truncate(model.message ? severityBadge(model.message.level, model.message.text) : "", size.cols));
   lines.push(truncate(statusBar(statusParts(model)), size.cols));
   return lines.join("\n");
 }
@@ -162,7 +169,7 @@ function handleSourceKey(token: string, dispatch: Dispatch<Msg>): boolean {
 }
 
 function handleExportKey(token: string, dispatch: Dispatch<Msg>): boolean {
-  const toggles: Record<string, Msg> = { t: { type: "export-toggle", what: "txt" }, e: { type: "export-toggle", what: "epub" }, p: { type: "export-toggle", what: "appendix" }, v: { type: "export-toggle", what: "vertical" }, a: { type: "export-toggle", what: "afterword" }, g: { type: "export-generate" } };
+  const toggles: Record<string, Msg> = { t: { type: "export-toggle", what: "txt" }, e: { type: "export-toggle", what: "epub" }, p: { type: "export-toggle", what: "appendix" }, v: { type: "export-toggle", what: "vertical" }, a: { type: "export-toggle", what: "afterword" }, g: { type: "open-overlay", overlay: { kind: "confirm", message: "현재 설정으로 결과물을 생성할까요?", action: "export-configured" } } };
   if (toggles[token]) {
     dispatch(toggles[token]!);
     return true;
@@ -199,7 +206,7 @@ function handleOverlayKey(model: AppModel, event: KeyEvent, token: string, dispa
     return;
   }
   if (overlay.kind === "settings") {
-    const ops: Record<string, Msg> = { b: { type: "settings-op", op: "cycle-backend" }, m: { type: "settings-op", op: "cycle-model" }, g: { type: "settings-op", op: "cycle-strictness" }, "+": { type: "settings-op", op: "inc-concurrency" }, "=": { type: "settings-op", op: "inc-concurrency" }, "-": { type: "settings-op", op: "dec-concurrency" }, t: { type: "settings-op", op: "toggle-txt" }, e: { type: "settings-op", op: "toggle-epub" } };
+    const ops: Record<string, Msg> = { b: { type: "settings-op", op: "cycle-backend" }, m: { type: "settings-op", op: "cycle-model" }, g: { type: "settings-op", op: "cycle-strictness" }, "+": { type: "settings-op", op: "inc-concurrency" }, "=": { type: "settings-op", op: "inc-concurrency" }, "-": { type: "settings-op", op: "dec-concurrency" }, t: { type: "settings-op", op: "toggle-txt" }, e: { type: "settings-op", op: "toggle-epub" }, k: { type: "settings-edit", field: "api-key" }, u: { type: "settings-edit", field: "base-url" } };
     if (token === "escape" || token === "q") {
       dispatch({ type: "close-overlay" });
     } else if (ops[token]) {
