@@ -133,6 +133,42 @@ test("Kakuyomu import rejects partial anchor-only tables when the page exposes a
   await assert.rejects(() => service.loadWork("https://kakuyomu.jp/works/999"), /295화.*7화/);
 });
 
+test("web import rejects cross-host episode URLs discovered in supported pages", async () => {
+  const fetchFn = fixtureFetch({
+    "https://kakuyomu.jp/works/777": `
+      <html><head><meta property="og:title" content="危険な庭 - カクヨム"></head>
+      <body><a href="https://evil.test/works/777/episodes/1">外部話</a></body></html>
+    `
+  });
+  const service = new WebImportService({ fetchFn, delayMs: 0 });
+  const work = await service.loadWork("https://kakuyomu.jp/works/777");
+  const preview = service.buildPreview(work, "1");
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-web-cross-host-"));
+
+  await assert.rejects(
+    () =>
+      service.importProject(preview, {
+        projectRoot: join(root, "projects"),
+        backend: "dry-run",
+        model: "dry-run",
+        translationStyle: defaultConfig.translationStyle,
+        concurrency: 1,
+        glossaryStrictness: defaultConfig.glossaryStrictness,
+        userConfirmedRights: true
+      }),
+    /지원하지 않는 웹소설 URL/
+  );
+});
+
+test("web import rejects redirects instead of following them silently", async () => {
+  const service = new WebImportService({
+    delayMs: 0,
+    fetchFn: async () => new Response("", { status: 302, headers: { location: "https://evil.test/" } })
+  });
+
+  await assert.rejects(() => service.loadWork("https://kakuyomu.jp/works/302"), /Redirected web import URLs/);
+});
+
 test("web import service reads Syosetu fixtures", async () => {
   const fetchFn = fixtureFetch({
     "https://ncode.syosetu.com/n1234ab/": `

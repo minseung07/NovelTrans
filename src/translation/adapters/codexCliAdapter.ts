@@ -6,7 +6,7 @@ import { nowIso } from "../../utils/time.js";
 import { runCodexCommand, summarizeCodexOutput } from "./codexCliProcess.js";
 import { parseTranslationResponse } from "./translationResponse.js";
 
-export type CodexCliAdapterOptions = {
+type CodexCliAdapterOptions = {
   command: string;
   model?: string;
   timeoutMs: number;

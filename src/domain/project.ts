@@ -1,6 +1,6 @@
 export type EpisodeStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
-export type ProjectStatus =
+type ProjectStatus =
   | "created"
   | "analyzed"
   | "ready"

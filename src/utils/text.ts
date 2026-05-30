@@ -24,7 +24,7 @@ export function extractNumbers(value: string): string[] {
   return Array.from(value.matchAll(/[0-9０-９]+/g), (match) => normalizeDigits(match[0] ?? ""));
 }
 
-export function normalizeDigits(value: string): string {
+function normalizeDigits(value: string): string {
   return value.replace(/[０-９]/g, (char) => String(char.charCodeAt(0) - 0xff10));
 }
 

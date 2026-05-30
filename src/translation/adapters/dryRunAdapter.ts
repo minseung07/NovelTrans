@@ -2,7 +2,7 @@ import type { AdapterStatus, TranslationInput, TranslationResult, TranslatorAdap
 import { nowIso } from "../../utils/time.js";
 import { extractNumbers, paragraphs } from "../../utils/text.js";
 
-export type DryRunAdapterOptions = {
+type DryRunAdapterOptions = {
   failEpisodeIds?: string[];
 };
 

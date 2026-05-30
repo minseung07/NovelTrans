@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import type { NovelTransConfig } from "../../domain/config.js";
 import type { TranslatorAdapter } from "../../domain/translation.js";
 import { rerunProjectQA, type ProjectQAProgress } from "../../engine/projectWorkflow.js";
@@ -9,12 +8,12 @@ import { writeProjectLog } from "../../storage/logger.js";
 import type { ProjectUiModel } from "../types.js";
 import { openFile, type OpenFileOptions } from "./fileOpenActions.js";
 
-export function selectedOpenIssue(model: ProjectUiModel, selectedIndex: number) {
+function selectedOpenIssue(model: ProjectUiModel, selectedIndex: number) {
   const issues = model.reviewDesk.openIssues;
   return issues[selectedIndex] ?? issues[0] ?? null;
 }
 
-export type RetryIssueEpisodeResult = {
+type RetryIssueEpisodeResult = {
   episodeId: string;
   completed: number;
   failed: number;
@@ -41,17 +40,6 @@ export async function markSelectedIssueIgnored(projectDir: string, model: Projec
     metadata: { issueId: issue.id }
   });
   return updated ? `검수 항목을 숨겼습니다: ${issue.type}` : "검수 항목을 찾지 못했습니다.";
-}
-
-export async function retrySelectedIssueEpisode(
-  projectDir: string,
-  model: ProjectUiModel,
-  selectedIndex: number,
-  adapter: TranslatorAdapter,
-  signal?: AbortSignal,
-  qaOptions?: NovelTransConfig["qa"]
-): Promise<string> {
-  return (await retrySelectedIssueEpisodeResult(projectDir, model, selectedIndex, adapter, signal, qaOptions)).message;
 }
 
 export async function retrySelectedIssueEpisodeResult(
@@ -162,11 +150,6 @@ export async function recheckReviewDeskQA(projectDir: string, onProgress?: (prog
     metadata: { issueCount: issues.length }
   });
   return `검수 재검사 완료: ${issues.length}개 항목.`;
-}
-
-export async function translationPathForSelectedIssue(projectDir: string, model: ProjectUiModel, selectedIndex: number): Promise<string> {
-  const path = await resolveTranslationPathForSelectedIssue(projectDir, model, selectedIndex);
-  return isResolutionMessage(path) ? path : `번역문 파일: ${path} (${basename(path)})`;
 }
 
 export async function openSelectedIssueTranslation(projectDir: string, model: ProjectUiModel, selectedIndex: number, options: OpenFileOptions = {}): Promise<string> {

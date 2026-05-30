@@ -290,8 +290,8 @@ class SessionCandidateAdapter implements TranslatorAdapter {
   }
 
   async translateEpisode(input: TranslationInput): Promise<TranslationResult> {
-    await sleep(input.episode.id === "episode_001" ? 20 : 0);
-    const candidate = input.episode.id === "episode_001" ? "黒架 => 흑가" : "聖印 => 성인";
+    await sleep(input.episode.id === "episode_00001" ? 20 : 0);
+    const candidate = input.episode.id === "episode_00001" ? "黒架 => 흑가" : "聖印 => 성인";
     return {
       episodeId: input.episode.id,
       titleKo: `제${input.episode.episodeNo}화`,

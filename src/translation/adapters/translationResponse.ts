@@ -1,4 +1,4 @@
-export type ParsedTranslationResponse = {
+type ParsedTranslationResponse = {
   titleKo: string;
   bodyKo: string;
   newGlossaryCandidates: string[];

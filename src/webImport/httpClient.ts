@@ -5,6 +5,7 @@ export type WebHttpClientOptions = {
   userAgent?: string;
   timeoutMs?: number;
   delayMs?: number;
+  isAllowedUrl?: (url: string) => boolean;
 };
 
 export class WebHttpClient {
@@ -13,26 +14,33 @@ export class WebHttpClient {
   private readonly userAgent: string;
   private readonly timeoutMs: number;
   private readonly delayMs: number;
+  private readonly isAllowedUrl?: (url: string) => boolean;
 
   constructor(options: WebHttpClientOptions = {}) {
     this.fetchFn = options.fetchFn ?? fetch;
     this.userAgent = options.userAgent ?? "NovelTrans/0.1 (+personal import)";
     this.timeoutMs = options.timeoutMs ?? 15000;
     this.delayMs = options.delayMs ?? 1500;
+    this.isAllowedUrl = options.isAllowedUrl;
   }
 
   async getText(url: string): Promise<string> {
+    this.assertAllowedUrl(url);
     await this.waitForRateLimit();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await this.fetchFn(url, {
+        redirect: "manual",
         signal: controller.signal,
         headers: {
           "user-agent": this.userAgent,
           accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         }
       });
+      if (isRedirectStatus(response.status)) {
+        throw new Error(`Redirected web import URLs are not supported: ${url}`);
+      }
       if (response.status === 403 || response.status === 401) {
         throw new Error(`접근이 차단됐습니다 (${response.status}). 로그인/유료/차단 페이지는 지원하지 않습니다.`);
       }
@@ -57,4 +65,14 @@ export class WebHttpClient {
     }
     this.lastRequestAt = Date.now();
   }
+
+  private assertAllowedUrl(url: string): void {
+    if (this.isAllowedUrl && !this.isAllowedUrl(url)) {
+      throw new Error(`지원하지 않는 웹소설 URL입니다: ${url}`);
+    }
+  }
+}
+
+function isRedirectStatus(status: number): boolean {
+  return status >= 300 && status < 400;
 }

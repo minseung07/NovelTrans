@@ -8,7 +8,7 @@ import type { QAIssue } from "../domain/qa.js";
 import type { TranslatorAdapter } from "../domain/translation.js";
 import { analyzeSource } from "./sourceAnalyzer.js";
 import { splitEpisodes } from "./episodeSplitter.js";
-import { createEmptyGlossary, detectGlossaryConflicts, extractGlossaryCandidates } from "../glossary/glossaryEngine.js";
+import { createEmptyGlossary, extractGlossaryCandidates } from "../glossary/glossaryEngine.js";
 import { runQA } from "../qa/qaEngine.js";
 import {
   createProjectDirectories,
@@ -31,7 +31,7 @@ import { slugify } from "../utils/path.js";
 import { nowIso } from "../utils/time.js";
 import { translateProjectQueue, type TranslationMode, type TranslationSummary } from "./translationOrchestrator.js";
 
-export type CreateProjectOptions = {
+type CreateProjectOptions = {
   sourcePath: string;
   projectRoot: string;
   name?: string;
@@ -45,7 +45,7 @@ export type CreateProjectOptions = {
   userConfirmedRights?: boolean;
 };
 
-export type CreateProjectFromTextOptions = Omit<CreateProjectOptions, "sourcePath"> & {
+type CreateProjectFromTextOptions = Omit<CreateProjectOptions, "sourcePath"> & {
   sourceText: string;
   sourceLabel: string;
 };
@@ -225,25 +225,6 @@ export async function rerunProjectQA(
   }
   await writeQualityReport(projectDir, allIssues);
   return allIssues;
-}
-
-export async function refreshGlossaryConflicts(projectDir: string): Promise<GlossaryData> {
-  const glossary = await loadGlossary(projectDir);
-  const next = {
-    ...glossary,
-    conflicts: detectGlossaryConflicts(glossary.entries),
-    updatedAt: nowIso()
-  };
-  await saveGlossary(projectDir, next);
-  await writeProjectLog({
-    projectDir,
-    category: "glossary",
-    event: "conflicts_refreshed",
-    message: `${next.conflicts.length} glossary conflict(s) detected.`,
-    projectId: (await loadProjectMetadata(projectDir)).id,
-    metadata: { conflictCount: next.conflicts.length }
-  });
-  return next;
 }
 
 async function uniqueProjectSlug(projectRoot: string, baseSlug: string): Promise<string> {

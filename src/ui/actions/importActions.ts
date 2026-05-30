@@ -2,13 +2,13 @@ import type { NovelTransConfig } from "../../domain/config.js";
 import { createProjectFromText, createProjectFromTxt } from "../../engine/projectWorkflow.js";
 import { WebImportService } from "../../webImport/webImportService.js";
 
-export type UiWebImportService = Pick<WebImportService, "loadWork" | "buildPreview" | "importProject">;
+type UiWebImportService = Pick<WebImportService, "loadWork" | "buildPreview" | "importProject">;
 
 export type UiWebImportOptions = {
   episodes?: string;
 };
 
-export type ImportSourceForUiOptions = {
+type ImportSourceForUiOptions = {
   webImportService?: UiWebImportService;
   webImport?: UiWebImportOptions;
 };

@@ -6,7 +6,7 @@ export type OpenFileOptions = {
   wait?: boolean;
 };
 
-export type OpenFileResult = {
+type OpenFileResult = {
   opened: boolean;
   command: string | null;
   message: string;

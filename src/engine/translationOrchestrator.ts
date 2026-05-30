@@ -2,15 +2,10 @@ import type { NovelTransConfig } from "../domain/config.js";
 import type { EpisodeState, ProjectMetadata, RunRecord } from "../domain/project.js";
 import type { QAIssue } from "../domain/qa.js";
 import type { TranslatorAdapter } from "../domain/translation.js";
-import { extractGlossaryCandidates } from "../glossary/glossaryEngine.js";
-import { runQA } from "../qa/qaEngine.js";
 import {
   listEpisodes,
   loadGlossary,
-  saveGlossary,
   saveProjectMetadata,
-  saveQAIssues,
-  saveTranslation,
   readAllQAIssues,
   writeQualityReport
 } from "../storage/projectStore.js";
@@ -19,12 +14,12 @@ import { ProjectStateStore } from "../storage/stateStore.js";
 import { writeProjectLog } from "../storage/logger.js";
 import { newId } from "../utils/hash.js";
 import { nowIso } from "../utils/time.js";
-import { translateEpisodeParts } from "./episodeTranslation.js";
+import { finishMetadataFromEpisodeStates, refreshGlossaryCandidatesForSource, translateAndPersistEpisode } from "./episodeLifecycle.js";
 import { ProjectGlossaryUpdater } from "./glossaryUpdate.js";
 
 export type TranslationMode = "resume" | "retry-failed" | "pending-only";
 
-export type TranslateProjectOptions = {
+type TranslateProjectOptions = {
   metadata: ProjectMetadata;
   adapter: TranslatorAdapter;
   mode: TranslationMode;
@@ -87,19 +82,23 @@ export async function translateProjectQueue(options: TranslateProjectOptions): P
     options.metadata.updatedAt = nowIso();
     await saveProjectMetadata(options.metadata);
 
-    let glossary = await loadGlossary(options.metadata.projectDir);
-    glossary = extractGlossaryCandidates(episodes, glossary);
-    await saveGlossary(options.metadata.projectDir, glossary);
+    const { glossary, refreshed } = await refreshGlossaryCandidatesForSource(
+      options.metadata.projectDir,
+      episodes,
+      await loadGlossary(options.metadata.projectDir)
+    );
     const glossaryUpdater = new ProjectGlossaryUpdater(options.metadata.projectDir, glossary);
-    await writeProjectLog({
-      projectDir: options.metadata.projectDir,
-      category: "glossary",
-      event: "candidates_refreshed",
-      message: `${glossary.entries.filter((entry) => entry.status === "candidate").length} candidate term(s), ${glossary.conflicts.length} conflict(s).`,
-      projectId: options.metadata.id,
-      runId: run.id,
-      metadata: { entryCount: glossary.entries.length, conflictCount: glossary.conflicts.length }
-    });
+    if (refreshed) {
+      await writeProjectLog({
+        projectDir: options.metadata.projectDir,
+        category: "glossary",
+        event: "candidates_refreshed",
+        message: `${glossary.entries.filter((entry) => entry.status === "candidate").length} candidate term(s), ${glossary.conflicts.length} conflict(s).`,
+        projectId: options.metadata.id,
+        runId: run.id,
+        metadata: { entryCount: glossary.entries.length, conflictCount: glossary.conflicts.length }
+      });
+    }
 
     const queue = [...queuedEpisodes];
     const workerCount = Math.max(1, Math.min(options.concurrency, queue.length || 1));
@@ -111,14 +110,7 @@ export async function translateProjectQueue(options: TranslateProjectOptions): P
     const qaIssues = workerResults.flatMap((result) => result.qaIssues);
     const allIssues = await collectAndPersistQualityReport(options.metadata.projectDir, qaIssues);
 
-    const finalStates = stateStore.listEpisodeStates();
-    options.metadata.status = finalStates.some((state) => state.status === "failed")
-      ? "completed_with_issues"
-      : finalStates.every((state) => state.status === "completed" || state.status === "skipped")
-        ? "completed"
-        : "ready";
-    options.metadata.updatedAt = nowIso();
-    await saveProjectMetadata(options.metadata);
+    await finishMetadataFromEpisodeStates(options.metadata, stateStore);
 
     stateStore.finishRun(run.id, failed > 0 ? "failed" : "completed", failed > 0 ? `${failed} episode(s) failed.` : undefined);
     await writeProjectLog({
@@ -186,27 +178,12 @@ async function runWorker(
         projectId: options.metadata.id,
         episodeId: episode.id
       });
-      const result = await translateEpisodeParts({
+      const { result, issues } = await translateAndPersistEpisode({
+        metadata: options.metadata,
         adapter: options.adapter,
         episode,
-        glossary: glossaryUpdater.snapshot(),
-        glossaryStrictness: options.metadata.options.glossaryStrictness,
-        translationStyle: options.metadata.options.translationStyle,
-        model: options.metadata.options.model
-      });
-      const glossary = await glossaryUpdater.mergeCandidates(result.newGlossaryCandidates, episode.id);
-      const issues = runQA(episode, result, glossary, options.qaOptions ?? options.metadata.options.qa);
-      result.qaIssueIds = issues.map((issue) => issue.id);
-      await saveTranslation(options.metadata.projectDir, episode, result);
-      await saveQAIssues(options.metadata.projectDir, episode, issues);
-      await writeProjectLog({
-        projectDir: options.metadata.projectDir,
-        category: "qa",
-        event: "episode_checked",
-        message: `${episode.title} QA completed with ${issues.length} issue(s).`,
-        projectId: options.metadata.id,
-        episodeId: episode.id,
-        metadata: { issueCount: issues.length }
+        glossaryUpdater,
+        qaOptions: options.qaOptions ?? options.metadata.options.qa
       });
       qaIssues.push(...issues);
       stateStore.setEpisodeStatus(episode.id, "completed");

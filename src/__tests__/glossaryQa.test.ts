@@ -172,6 +172,42 @@ test("QA issues carry paragraph locations for Review Desk detail", () => {
   assert.match(number?.sourceSnippet ?? "", /34/);
 });
 
+test("QA covers translated foreword and afterword sections", () => {
+  let glossary = createEmptyGlossary();
+  glossary = confirmGlossaryTerm(glossary, "聖印", "성인", true);
+
+  const episode: Episode = {
+    id: "episode_001",
+    episodeNo: 1,
+    title: "第1話 付録",
+    sourceText: ["まえがき", "黒架は12人に挨拶した。", "", "黒架は歩いた。", "", "あとがき", "聖印は34回光った。"].join("\n"),
+    foreword: "まえがき\n\n黒架は12人に挨拶した。",
+    body: "黒架は歩いた。",
+    afterword: "あとがき\n\n聖印は34回光った。",
+    sourceHash: "hash",
+    metadata: {}
+  };
+  const result: TranslationResult = {
+    episodeId: episode.id,
+    titleKo: "제1화",
+    forewordKo: "まえがき\n\n흑가는 12명에게 인사했다.",
+    bodyKo: "흑가는 걸었다.",
+    afterwordKo: "후기입니다.",
+    usedGlossaryEntries: [],
+    newGlossaryCandidates: [],
+    qaIssueIds: [],
+    model: "dry-run",
+    backend: "dry-run",
+    createdAt: new Date().toISOString()
+  };
+
+  const issues = runQA(episode, result, glossary);
+  const forewordJapanese = issues.find((issue) => issue.type === "japanese_remaining" && issue.section === "foreword");
+  assert.match(forewordJapanese?.targetSnippet ?? "", /まえがき/);
+  assert.equal(issues.some((issue) => issue.type === "number_mismatch" && issue.section === "afterword"), true);
+  assert.equal(issues.some((issue) => issue.type === "locked_term_violation" && issue.section === "afterword"), true);
+});
+
 test("QA options disable configured checks without muting structural errors", () => {
   const episode: Episode = {
     id: "episode_001",

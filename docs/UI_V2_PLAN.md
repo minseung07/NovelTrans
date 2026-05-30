@@ -4,7 +4,7 @@
 이 앱의 본질(① 길고 재개 가능한 비동기 배치 번역 ② 사람이 개입하는 용어/QA 큐레이션
 ③ 가져오기→번역→용어집→QA→내보내기 파이프라인)에 맞춰 `src/ui-v2/`를 새로 짠다.
 
-`docs/UI_UX_PLANS.md`는 폐기·방치하며 본 문서가 단일 기준이다.
+이 문서가 현재 TUI 설계의 단일 기준이다. 폐기된 `docs/UI_UX_PLANS.md`는 제거했다.
 
 ---
 
@@ -204,7 +204,7 @@ interface Model {
   - [x] CLI 정적 서브커맨드(`studio`/`glossary-lab`/`review-desk`/`export-room`/`bookshelf`/`palette`) 출력을 v2 view로 재배선
   - [x] `app` 기본값 v2로 전환, `--v2`/env 게이트 제거
   - [x] 옛 `src/ui/`(인터랙티브 TUI: terminalApp/screens/widgets/core/app/keyHandlers/layout 등) 및 관련 테스트 제거, import 정리, `dist/` 재빌드. (모델/액션 빌더 계층은 v2가 재사용하므로 `src/ui/`에 잔존)
-  - [x] README/CHANGELOG 갱신(`UI_UX_PLANS.md`는 폐기 명시)
+  - [x] README/CHANGELOG 갱신 및 폐기된 `UI_UX_PLANS.md` 제거
   - [x] 회귀: 전체 test + smoke + 수동 점검
 - 게이트: 옛 UI 의존 0건, 전체 test/smoke 통과, 패키지 내용 확인(`npm pack --dry-run`).
 

@@ -3,8 +3,8 @@
 
 import { ANSI_PATTERN } from "../theme/ansi.js";
 
-export const SCREEN_WIDTH = 74;
-export const MIN_SCREEN_WIDTH = 44;
+const SCREEN_WIDTH = 74;
+const MIN_SCREEN_WIDTH = 44;
 export const MAX_SCREEN_WIDTH = 120;
 
 export function normalizeScreenWidth(width?: number): number {

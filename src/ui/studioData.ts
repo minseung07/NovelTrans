@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import type { NovelTransConfig } from "../domain/config.js";
 import type { QAIssue } from "../domain/qa.js";
 import { loadProjectOverview } from "../engine/projectWorkflow.js";
 import { loadGlossary, listEpisodes, readAllQAIssues } from "../storage/projectStore.js";
@@ -9,6 +8,7 @@ import { discoverProjectDirs } from "../storage/projectStore.js";
 import { projectPaths } from "../storage/projectPaths.js";
 import { slugify } from "../utils/path.js";
 import { countExportableTranslatedEpisodes } from "../export/exportableTranslations.js";
+import { glossaryAppendixEntries } from "../export/glossaryAppendix.js";
 import type { BookshelfModel, BookshelfProject, ExportPreview, GlossaryPulse, ProjectUiModel } from "./types.js";
 import { buildFailureRecovery, buildNextActions } from "./nextActions.js";
 import { buildSourceStatus } from "./sourceStatus.js";
@@ -16,7 +16,6 @@ import { buildStudioQueue } from "./studioQueue.js";
 import { buildProjectTimeline } from "./projectTimeline.js";
 import { buildReviewDeskModel } from "./reviewDeskModel.js";
 import { buildBookshelfProject } from "./bookshelfProject.js";
-import { translationStyleLabel } from "./recipeStyle.js";
 import { loadCachedSourceAnalysis } from "./sourceAnalysisCache.js";
 
 export async function loadBookshelfModel(projectRoot: string): Promise<BookshelfModel> {
@@ -63,40 +62,13 @@ export async function loadProjectUiModel(projectDir: string): Promise<ProjectUiM
     timeline: buildProjectTimeline(liveEvents),
     reviewDesk: buildReviewDeskModel(qaIssues),
     liveEvents,
-    exportPreview: await buildExportPreview(projectDir, overview.metadata.name, episodes.length, glossary.entries.filter((entry) => entry.target).length)
+    exportPreview: await buildExportPreview(projectDir, overview.metadata.name, episodes.length, glossaryAppendixEntries(glossary.entries).length)
   };
   return {
     ...baseModel,
     nextActions: buildNextActions({ ...baseModel, liveEvents: translationEvents }),
     failureRecovery: buildFailureRecovery(baseModel)
   };
-}
-
-export function recipeSummary(config: NovelTransConfig): string {
-  return `${translationStyleLabel(config.translationStyle)} · ${config.concurrency}화 병렬 · 용어 ${strictnessSummary(config.glossaryStrictness)} · ${config.outputFormats.join("+").toUpperCase()} · ${backendSummary(config.defaultBackend)}`;
-}
-
-function backendSummary(backend: NovelTransConfig["defaultBackend"]): string {
-  if (backend === "openai-compatible") {
-    return "OpenAI 호환";
-  }
-  if (backend === "codex-cli") {
-    return "Codex CLI";
-  }
-  return "Dry-run";
-}
-
-function strictnessSummary(strictness: NovelTransConfig["glossaryStrictness"]): string {
-  if (strictness === "strict") {
-    return "매우 엄격";
-  }
-  if (strictness === "high") {
-    return "높음";
-  }
-  if (strictness === "medium") {
-    return "보통";
-  }
-  return "낮음";
 }
 
 function buildGlossaryPulse(glossary: Awaited<ReturnType<typeof loadGlossary>>, qaIssues: QAIssue[]): GlossaryPulse {

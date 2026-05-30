@@ -1,18 +1,21 @@
 import type { NovelTransConfig } from "../domain/config.js";
 import type { ProjectMetadata, RunRecord } from "../domain/project.js";
-import type { QAIssue } from "../domain/qa.js";
 import type { TranslatorAdapter } from "../domain/translation.js";
-import { loadGlossary, loadProjectMetadata, listEpisodes, readAllQAIssues, saveGlossary, saveProjectMetadata, saveQAIssues, saveTranslation, writeQualityReport } from "../storage/projectStore.js";
+import { loadGlossary, loadProjectMetadata, listEpisodes, readAllQAIssues, saveProjectMetadata, writeQualityReport } from "../storage/projectStore.js";
 import { projectPaths } from "../storage/projectPaths.js";
 import { ProjectStateStore } from "../storage/stateStore.js";
 import { writeProjectLog } from "../storage/logger.js";
-import { runQA } from "../qa/qaEngine.js";
-import { mergeTranslationGlossaryCandidates } from "../glossary/glossaryEngine.js";
 import { newId } from "../utils/hash.js";
 import { nowIso } from "../utils/time.js";
-import { translateEpisodeParts } from "./episodeTranslation.js";
+import {
+  finishMetadataFromEpisodeStates,
+  isAbortError,
+  refreshGlossaryCandidatesForSource,
+  translateAndPersistEpisode
+} from "./episodeLifecycle.js";
+import { ProjectGlossaryUpdater } from "./glossaryUpdate.js";
 
-export type TranslateSingleEpisodeOptions = {
+type TranslateSingleEpisodeOptions = {
   projectDir: string;
   episodeId: string;
   adapter: TranslatorAdapter;
@@ -21,7 +24,7 @@ export type TranslateSingleEpisodeOptions = {
   qaOptions?: NovelTransConfig["qa"];
 };
 
-export type SingleEpisodeTranslationSummary = {
+type SingleEpisodeTranslationSummary = {
   episodeId: string;
   completed: number;
   failed: number;
@@ -63,25 +66,16 @@ export async function translateSingleEpisode(options: TranslateSingleEpisodeOpti
     stateStore.markEpisodeRunning(episode.id);
     await logEpisode(metadata, "translation", "episode_retranslate_started", `${episode.title} retranslation started: ${options.reason}.`, episode.id);
 
-    let glossary = await loadGlossary(options.projectDir);
-    const result = await translateEpisodeParts({
+    const { glossary } = await refreshGlossaryCandidatesForSource(options.projectDir, episodes, await loadGlossary(options.projectDir));
+    const glossaryUpdater = new ProjectGlossaryUpdater(options.projectDir, glossary);
+    const { result, issues } = await translateAndPersistEpisode({
+      metadata,
       adapter: options.adapter,
       episode,
-      glossary,
-      glossaryStrictness: metadata.options.glossaryStrictness,
-      translationStyle: metadata.options.translationStyle,
-      model: metadata.options.model,
+      glossaryUpdater,
+      qaOptions: options.qaOptions ?? metadata.options.qa,
       signal: options.signal
     });
-    const nextGlossary = mergeTranslationGlossaryCandidates(glossary, result.newGlossaryCandidates, episode.id);
-    if (nextGlossary !== glossary) {
-      glossary = nextGlossary;
-      await saveGlossary(options.projectDir, glossary);
-    }
-    const issues: QAIssue[] = runQA(episode, result, glossary, options.qaOptions ?? metadata.options.qa);
-    result.qaIssueIds = issues.map((issue) => issue.id);
-    await saveTranslation(options.projectDir, episode, result);
-    await saveQAIssues(options.projectDir, episode, issues);
     await writeQualityReport(options.projectDir, await readAllQAIssues(options.projectDir));
     stateStore.setEpisodeStatus(episode.id, "completed");
 
@@ -92,40 +86,25 @@ export async function translateSingleEpisode(options: TranslateSingleEpisodeOpti
       model: result.model
     });
 
-    await finishMetadata(metadata, stateStore);
+    await finishMetadataFromEpisodeStates(metadata, stateStore);
     stateStore.finishRun(run.id, "completed");
     return { episodeId: episode.id, completed: 1, failed: 0, cancelled: 0, qaIssues: issues.length };
   } catch (error) {
     if (isAbortError(error) || options.signal?.aborted) {
       stateStore.setEpisodeStatus(episode.id, "pending");
-      await finishMetadata(metadata, stateStore);
+      await finishMetadataFromEpisodeStates(metadata, stateStore);
       stateStore.finishRun(run.id, "cancelled", "Review retranslation cancelled.");
       await logEpisode(metadata, "translation", "episode_retranslate_cancelled", `${episode.title} retranslation cancelled.`, episode.id);
       return { episodeId: episode.id, completed: 0, failed: 0, cancelled: 1, qaIssues: 0 };
     }
     stateStore.setEpisodeStatus(episode.id, "failed", (error as Error).message);
-    await finishMetadata(metadata, stateStore);
+    await finishMetadataFromEpisodeStates(metadata, stateStore);
     stateStore.finishRun(run.id, "failed", (error as Error).message);
     await logEpisode(metadata, "error", "episode_retranslate_failed", (error as Error).message, episode.id);
     return { episodeId: episode.id, completed: 0, failed: 1, cancelled: 0, qaIssues: 0 };
   } finally {
     stateStore.close();
   }
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError" || /cancelled|aborted/i.test(error.message));
-}
-
-async function finishMetadata(metadata: ProjectMetadata, stateStore: ProjectStateStore): Promise<void> {
-  const states = stateStore.listEpisodeStates();
-  metadata.status = states.some((state) => state.status === "failed")
-    ? "completed_with_issues"
-    : states.every((state) => state.status === "completed" || state.status === "skipped")
-      ? "completed"
-      : "ready";
-  metadata.updatedAt = nowIso();
-  await saveProjectMetadata(metadata);
 }
 
 async function logEpisode(

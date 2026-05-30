@@ -5,8 +5,8 @@ import type { BookshelfModel, GlossaryQueueFilter, ProjectUiModel } from "../../
 import type { TranslationSessionSnapshot } from "../../engine/translationSession.js";
 import type { Overlay, Stage } from "./model.js";
 
-export type GlossaryOp = "confirm" | "lock" | "forbid" | "discard";
-export type QaOp = "ignore" | "recheck" | "retranslate";
+type GlossaryOp = "confirm" | "lock" | "forbid" | "discard";
+type QaOp = "ignore" | "recheck" | "retranslate";
 export type SettingsOp = "cycle-backend" | "cycle-model" | "cycle-strictness" | "inc-concurrency" | "dec-concurrency" | "toggle-txt" | "toggle-epub";
 export type ExportToggle = "txt" | "epub" | "appendix" | "afterword" | "vertical";
 

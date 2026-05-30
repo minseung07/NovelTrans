@@ -1,7 +1,7 @@
 // Low-level ANSI SGR styling. When disabled, all helpers return text unchanged.
 // One self-contained reset per call avoids nested-reset bugs when segments are concatenated.
 
-export const RESET = "\x1b[0m";
+const RESET = "\x1b[0m";
 
 export function sgr(enabled: boolean, codes: number[], text: string): string {
   if (!enabled || codes.length === 0) {
@@ -19,7 +19,3 @@ export function fg256(enabled: boolean, level: number, code: number, basic: numb
 }
 
 export const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
-
-export function stripAnsi(value: string): string {
-  return value.replace(ANSI_PATTERN, "");
-}

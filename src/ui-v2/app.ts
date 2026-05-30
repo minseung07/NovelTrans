@@ -30,7 +30,7 @@ import { renderProject, projectOf, STAGE_LABELS, STAGE_ORDER } from "./screens/p
 import { jobSegment } from "./screens/project/overview.js";
 import { renderHelp, renderSettings, renderPalette } from "./screens/overlays.js";
 
-export interface UiV2Options {
+interface UiV2Options {
   config: NovelTransConfig;
   configDir?: string;
   projectRoot?: string;

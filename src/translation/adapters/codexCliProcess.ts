@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-export type CodexCommandResult = {
+type CodexCommandResult = {
   code: number | null;
   stdout: string;
   stderr: string;

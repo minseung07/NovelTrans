@@ -1,5 +1,5 @@
 node_modules/
-dist/__tests__/
+dist/
 tmp/
 projects/
 coverage/

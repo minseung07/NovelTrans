@@ -7,9 +7,9 @@ import { fg256, sgr } from "./ansi.js";
 
 export type Severity = "info" | "warning" | "critical" | "success";
 
-export type BoxChars = { tl: string; tr: string; bl: string; br: string; h: string; v: string };
+type BoxChars = { tl: string; tr: string; bl: string; br: string; h: string; v: string };
 
-export interface Theme {
+interface Theme {
   colorLevel: ColorLevel;
   unicode: boolean;
   box: BoxChars;
@@ -19,7 +19,6 @@ export interface Theme {
   severity(level: Severity, text: string): string;
   focus(text: string): string;
   badge(level: Severity): string;
-  spinnerFrames: string[];
   progressFull: string;
   progressEmpty: string;
 }
@@ -53,7 +52,6 @@ export function createTheme(colorLevel: ColorLevel, unicode: boolean): Theme {
       const code = SEVERITY_CODES[level];
       return fg256(on, colorLevel, code.c256, code.basic, dot);
     },
-    spinnerFrames: unicode ? ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] : ["|", "/", "-", "\\"],
     progressFull: unicode ? "█" : "#",
     progressEmpty: unicode ? "░" : "-"
   };

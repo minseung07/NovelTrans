@@ -279,6 +279,49 @@ test("OpenAI-compatible adapter retries transient chat completion failures", asy
   assert.equal(result.bodyKo, "재시도 성공 번역문");
 });
 
+test("OpenAI-compatible adapter rejects cleartext base URLs before sending tokens", async (context) => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response("should not be called", { status: 500 });
+  };
+
+  const adapter = new OpenAICompatibleAdapter({
+    apiKey: "sk-test",
+    baseUrl: "http://example.test/v1",
+    model: "test-model",
+    temperature: 0.2,
+    timeoutMs: 5000
+  });
+
+  const status = await adapter.checkAvailability();
+  assert.equal(status.available, false);
+  assert.match(status.message, /https/);
+  await assert.rejects(
+    () =>
+      adapter.translateEpisode({
+        episode: {
+          id: "episode_001",
+          episodeNo: 1,
+          title: "第1話",
+          sourceText: "黒架は歩いた。",
+          body: "黒架は歩いた。",
+          sourceHash: "hash",
+          metadata: {}
+        },
+        glossaryEntries: [],
+        glossaryContext: "",
+        model: "test-model"
+      }),
+    /https/
+  );
+  assert.equal(calls, 0);
+});
+
 test("OpenAI-compatible adapter parses translated title and glossary candidates from JSON", async (context) => {
   const originalFetch = globalThis.fetch;
   context.after(() => {

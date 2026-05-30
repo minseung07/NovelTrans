@@ -8,9 +8,9 @@ import type { TranslationSessionStatus } from "../../engine/translationSession.j
 
 export type Stage = "overview" | "source" | "translate" | "glossary" | "qa" | "export";
 
-export type Route = { screen: "library" } | { screen: "project"; projectDir: string; stage: Stage };
+type Route = { screen: "library" } | { screen: "project"; projectDir: string; stage: Stage };
 
-export type JobKind = "translate" | "retry";
+type JobKind = "translate" | "retry";
 
 export interface Job {
   kind: JobKind;
@@ -21,7 +21,7 @@ export interface Job {
   failed: number;
 }
 
-export type InputState =
+type InputState =
   | {
       kind: "glossary-edit" | "import";
       label: string;

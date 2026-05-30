@@ -2,17 +2,12 @@ import type { Episode } from "../domain/episode.js";
 import type { NovelTransConfig } from "../domain/config.js";
 import type { ProjectMetadata, RunRecord } from "../domain/project.js";
 import type { TranslatorAdapter } from "../domain/translation.js";
-import { extractGlossaryCandidates } from "../glossary/glossaryEngine.js";
-import { runQA } from "../qa/qaEngine.js";
 import {
   listEpisodes,
   loadGlossary,
   loadProjectMetadata,
   readAllQAIssues,
-  saveGlossary,
   saveProjectMetadata,
-  saveQAIssues,
-  saveTranslation,
   writeQualityReport
 } from "../storage/projectStore.js";
 import { projectPaths } from "../storage/projectPaths.js";
@@ -20,7 +15,12 @@ import { ProjectStateStore } from "../storage/stateStore.js";
 import { writeProjectLog } from "../storage/logger.js";
 import { newId } from "../utils/hash.js";
 import { nowIso } from "../utils/time.js";
-import { translateEpisodeParts } from "./episodeTranslation.js";
+import {
+  finishMetadataFromEpisodeStates,
+  isAbortError,
+  refreshGlossaryCandidatesForSource,
+  translateAndPersistEpisode
+} from "./episodeLifecycle.js";
 import { ProjectGlossaryUpdater } from "./glossaryUpdate.js";
 import type { TranslationMode } from "./translationOrchestrator.js";
 
@@ -41,7 +41,7 @@ export type TranslationSessionSnapshot = {
   message: string | null;
 };
 
-export type TranslationSessionOptions = {
+type TranslationSessionOptions = {
   projectDir: string;
   adapter: TranslatorAdapter;
   mode: TranslationMode;
@@ -166,9 +166,7 @@ export class TranslationSession {
       await saveProjectMetadata(this.metadata);
       await this.log("translation", "session_started", `${queue.length} episode(s) queued.`, run.id);
 
-      let glossary = await loadGlossary(this.metadata.projectDir);
-      glossary = extractGlossaryCandidates(episodes, glossary);
-      await saveGlossary(this.metadata.projectDir, glossary);
+      const { glossary } = await refreshGlossaryCandidatesForSource(this.metadata.projectDir, episodes, await loadGlossary(this.metadata.projectDir));
       const glossaryUpdater = new ProjectGlossaryUpdater(this.metadata.projectDir, glossary);
 
       const workerCount = Math.max(1, Math.min(this.metadata.options.concurrency, queue.length || 1));
@@ -178,9 +176,13 @@ export class TranslationSession {
       if (this.status !== "cancelled") {
         this.status = this.failed > 0 ? "failed" : "completed";
       }
-      this.metadata.status = this.status === "cancelled" ? "paused" : this.failed > 0 ? "completed_with_issues" : "completed";
-      this.metadata.updatedAt = nowIso();
-      await saveProjectMetadata(this.metadata);
+      if (this.status === "cancelled") {
+        this.metadata.status = "paused";
+        this.metadata.updatedAt = nowIso();
+        await saveProjectMetadata(this.metadata);
+      } else {
+        await finishMetadataFromEpisodeStates(this.metadata, stateStore);
+      }
       stateStore.finishRun(run.id, this.failed > 0 ? "failed" : this.status === "cancelled" ? "cancelled" : "completed");
       await this.log("translation", "session_finished", `completed=${this.completed}, failed=${this.failed}.`, run.id);
       this.activeEpisodes.clear();
@@ -222,24 +224,22 @@ export class TranslationSession {
     stateStore.markEpisodeRunning(episode.id);
     await this.log("translation", "episode_started", `${episode.title} started.`, undefined, episode.id);
     try {
-      const result = await translateEpisodeParts({
+      const { result, issues } = await translateAndPersistEpisode({
+        metadata: this.metadata,
         adapter: this.adapter,
         episode,
-        glossary: glossaryUpdater.snapshot(),
-        glossaryStrictness: this.metadata.options.glossaryStrictness,
-        translationStyle: this.metadata.options.translationStyle,
-        model: this.metadata.options.model,
+        glossaryUpdater,
+        qaOptions: this.qaOptions,
         signal: this.abortController.signal
       });
-      const glossary = await glossaryUpdater.mergeCandidates(result.newGlossaryCandidates, episode.id);
-      const issues = runQA(episode, result, glossary, this.qaOptions);
-      result.qaIssueIds = issues.map((issue) => issue.id);
-      await saveTranslation(this.metadata.projectDir, episode, result);
-      await saveQAIssues(this.metadata.projectDir, episode, issues);
       stateStore.setEpisodeStatus(episode.id, "completed");
       this.completed += 1;
       this.message = `${episode.title} 완료.`;
-      await this.log("translation", "episode_completed", `${episode.title} completed.`, undefined, episode.id);
+      await this.log("translation", "episode_completed", `${episode.title} completed.`, undefined, episode.id, {
+        qaIssueCount: issues.length,
+        backend: result.backend,
+        model: result.model
+      });
     } catch (error) {
       if (this.status === "cancelled" || isAbortError(error)) {
         stateStore.setEpisodeStatus(episode.id, "pending", "Translation cancelled.");
@@ -262,7 +262,14 @@ export class TranslationSession {
     }
   }
 
-  private async log(category: "translation" | "error", event: string, message: string, runId?: string, episodeId?: string): Promise<void> {
+  private async log(
+    category: "translation" | "error",
+    event: string,
+    message: string,
+    runId?: string,
+    episodeId?: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void> {
     await writeProjectLog({
       projectDir: this.metadata.projectDir,
       category,
@@ -271,7 +278,8 @@ export class TranslationSession {
       message,
       projectId: this.metadata.id,
       runId,
-      episodeId
+      episodeId,
+      metadata
     });
   }
 
@@ -310,10 +318,6 @@ function sessionStatusLabel(status: TranslationSessionStatus): string {
     return "진행 중";
   }
   return "대기";
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && (error.name === "AbortError" || /cancelled|aborted/i.test(error.message));
 }
 
 function shouldQueue(status: string | undefined, mode: TranslationMode): boolean {

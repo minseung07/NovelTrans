@@ -62,7 +62,7 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
-export function stripTags(value: string): string {
+function stripTags(value: string): string {
   return decodeHtml(value.replace(/<[^>]+>/g, ""));
 }
 
@@ -70,7 +70,7 @@ export function normalizeText(value: string): string {
   return decodeHtml(value).replace(/\s+/g, " ").trim();
 }
 
-export function decodeHtml(value: string): string {
+function decodeHtml(value: string): string {
   const named: Record<string, string> = {
     amp: "&",
     lt: "<",

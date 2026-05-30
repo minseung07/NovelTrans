@@ -9,7 +9,7 @@ export type GlossaryTermType =
   | "term"
   | "unknown";
 
-export type GlossaryStatus = "candidate" | "confirmed" | "locked" | "forbidden" | "deprecated";
+type GlossaryStatus = "candidate" | "confirmed" | "locked" | "forbidden" | "deprecated";
 
 export type GlossaryTargetCandidate = {
   target: string;

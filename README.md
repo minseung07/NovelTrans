@@ -4,7 +4,7 @@ NovelTrans is a TypeScript CLI/TUI tool for translating long-form Japanese novel
 
 It is built for workflows where one source contains many episodes, repeated character names, setting terms, item names, and other glossary-sensitive text. NovelTrans keeps the source, episodes, translation state, glossary candidates, QA issues, logs, and TXT/EPUB exports together in one project directory.
 
-Version: `2.1.0`<br>
+Version: `2.1.1`<br>
 Status: initial public release
 
 ## Features
@@ -18,7 +18,7 @@ Status: initial public release
 - TXT and EPUB export
 - Terminal app plus command-based workflows
 - Translation backends: `dry-run`, `openai-compatible`, and `codex-cli`
-- GitHub install support through npm `prepare`
+- Published npm package with generated runtime build artifacts
 
 ## Requirements
 
@@ -29,10 +29,10 @@ Status: initial public release
 
 ## Installation
 
-From GitHub:
+From npm:
 
 ```bash
-npm install -g github:minseung07/NovelTrans
+npm install -g noveltrans
 ```
 
 After installation:
@@ -41,7 +41,7 @@ After installation:
 noveltrans help
 ```
 
-The GitHub install uses the committed `dist/` files and does not run a TypeScript build during installation.
+Release packages include generated `dist/` files. The repository treats `dist/` as build output, not source.
 
 ## Quick Start
 
@@ -108,6 +108,8 @@ or the local credential store:
 noveltrans auth set-openai-key --api-key sk-...
 ```
 
+The local credential file is protected primarily by your filesystem permissions. It is not a substitute for an OS keychain or a user-supplied passphrase.
+
 Then translate:
 
 ```bash
@@ -125,6 +127,8 @@ or:
 ```bash
 noveltrans config set --base-url https://example.com/v1
 ```
+
+OpenAI-compatible base URLs must use `https://` so bearer tokens are not sent over cleartext HTTP.
 
 ## Codex CLI Backend
 
@@ -255,6 +259,8 @@ Build:
 npm run build
 ```
 
+`dist/` is generated and ignored by git. Rebuild it before local package checks.
+
 Run tests:
 
 ```bash
@@ -270,8 +276,10 @@ npm run smoke
 Check package contents:
 
 ```bash
-npm pack --dry-run
+npm run pack:check
 ```
+
+Current architecture and release notes for contributors are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Release Notes
 

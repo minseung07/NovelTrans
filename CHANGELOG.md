@@ -2,6 +2,25 @@
 
 All notable changes to NovelTrans will be documented in this file.
 
+## [2.1.1] - 2026-05-30
+
+### Changed
+
+- Switched release expectations from GitHub installs with committed `dist/` to npm package publishing with generated build artifacts.
+- Updated credential wording to describe the local store as filesystem-permission protected rather than strong encryption.
+- Removed generated `dist/` files from the repository and kept them as package-time build output.
+- Removed stale v2 planning documents and unused legacy UI helpers left after the v2 TUI migration.
+- Reduced internal-only TypeScript exports across the CLI, engine, storage, translation, TUI, and web-import modules.
+
+### Fixed
+
+- Fixed numeric episode artifact ordering for serials with 1000+ episodes while preserving reads of old 3-digit project files.
+- Rejected cleartext OpenAI-compatible base URLs before bearer tokens are sent.
+- Hardened web import fetches with per-request allowlist validation and redirect rejection.
+- Made CLI value options fail fast when a value is missing.
+- Extended QA coverage to translated foreword and afterword sections.
+- Made the export preview glossary appendix count match the actual confirmed/locked appendix filter.
+
 ## [2.1.0] - 2026-05-30
 
 ### Added
@@ -39,7 +58,7 @@ All notable changes to NovelTrans will be documented in this file.
 
 - Removed the legacy interactive terminal UI implementation, including the monolithic `terminalApp`, old screens, key handlers, renderer, line reader, layout helpers, import drop-in flow, and old task/status widgets.
 - Removed legacy UI action/screen tests that targeted the deleted terminal UI.
-- Deprecated the old `docs/UI_UX_PLANS.md` plan in favor of `docs/UI_V2_PLAN.md`.
+- Removed the old `docs/UI_UX_PLANS.md` plan in favor of `docs/UI_V2_PLAN.md`.
 
 ## [2.0.4] - 2026-05-29
 
@@ -88,7 +107,7 @@ Initial public release.
 - QA checks for remaining Japanese text, number mismatches, length ratio, and glossary consistency.
 - TXT and EPUB export.
 - `dry-run`, `openai-compatible`, and `codex-cli` translation backends.
-- Local config and encrypted credential storage.
+- Local config and filesystem-permission protected credential storage.
 - GitHub npm install support through `prepare`, with `dist/` generated at install time.
 - Package file allowlist for distributable runtime files, README, changelog, and license.
 

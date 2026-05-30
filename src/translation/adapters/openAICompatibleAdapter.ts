@@ -2,7 +2,7 @@ import type { AdapterStatus, TranslationInput, TranslationResult, TranslatorAdap
 import { nowIso } from "../../utils/time.js";
 import { parseTranslationResponse } from "./translationResponse.js";
 
-export type OpenAICompatibleAdapterOptions = {
+type OpenAICompatibleAdapterOptions = {
   apiKey?: string;
   baseUrl: string;
   model: string;
@@ -35,6 +35,13 @@ export class OpenAICompatibleAdapter implements TranslatorAdapter {
       return {
         available: false,
         message: "OPENAI_API_KEY is not set."
+      };
+    }
+    const baseUrlError = validateHttpsBaseUrl(this.options.baseUrl);
+    if (baseUrlError) {
+      return {
+        available: false,
+        message: baseUrlError
       };
     }
     if (!this.options.model) {
@@ -133,6 +140,10 @@ function renderRequestBody(input: TranslationInput, options: OpenAICompatibleAda
 }
 
 async function fetchWithTimeout(url: string, requestBody: Record<string, unknown>, options: OpenAICompatibleAdapterOptions, signal?: AbortSignal): Promise<Response> {
+  const baseUrlError = validateHttpsBaseUrl(url);
+  if (baseUrlError) {
+    throw new Error(baseUrlError);
+  }
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
@@ -214,4 +225,17 @@ function renderPrompt(input: TranslationInput): string {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/g, "");
+}
+
+function validateHttpsBaseUrl(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "OpenAI-compatible base URL is not a valid URL.";
+  }
+  if (url.protocol !== "https:") {
+    return "OpenAI-compatible base URL must use https to protect bearer tokens.";
+  }
+  return null;
 }

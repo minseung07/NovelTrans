@@ -9,7 +9,7 @@ import { normalizeNewlines } from "../utils/text.js";
 
 const maxChunkCharacters = 30000;
 
-export type TranslateEpisodePartsOptions = {
+type TranslateEpisodePartsOptions = {
   adapter: TranslatorAdapter;
   episode: Episode;
   glossary: GlossaryData;

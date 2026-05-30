@@ -25,11 +25,3 @@ export function buildReviewDeskModel(issues: QAIssue[]): ReviewDeskModel {
   });
   return { openIssues, buckets };
 }
-
-export function hideReviewDeskEpisodes(reviewDesk: ReviewDeskModel, episodeIds: Iterable<string>): ReviewDeskModel {
-  const hidden = new Set(episodeIds);
-  if (hidden.size === 0) {
-    return reviewDesk;
-  }
-  return buildReviewDeskModel(reviewDesk.openIssues.filter((issue) => !hidden.has(issue.episodeId)));
-}

@@ -124,18 +124,6 @@ export function relatedTermsForEpisode(model: ProjectUiModel, episodeTitle: stri
   return formatRelatedTerms(model, episode.id, episode.title, episode.sourceText);
 }
 
-export function relatedTermsForIssue(model: ProjectUiModel, selectedIssueIndex: number): string {
-  const issue = model.reviewDesk.openIssues[selectedIssueIndex] ?? model.reviewDesk.openIssues[0];
-  if (!issue) {
-    return "선택된 검수 항목이 없습니다.";
-  }
-  const episode = model.episodes.find((item) => item.id === issue.episodeId);
-  if (!episode) {
-    return `화를 찾을 수 없습니다: ${issue.episodeId}`;
-  }
-  return formatRelatedTerms(model, episode.id, episode.title, episode.sourceText);
-}
-
 function formatRelatedTerms(model: ProjectUiModel, episodeId: string, episodeTitle: string, sourceText: string): string {
   const terms = model.glossary.entries.filter((entry) => sourceText.includes(entry.source)).slice(0, 12);
   if (terms.length === 0) {

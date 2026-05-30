@@ -1,16 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { defaultConfig } from "../config/defaultConfig.js";
 import { exportProject } from "../export/exporter.js";
 import { createProjectFromText, createProjectFromTxt, loadProjectOverview, rerunProjectQA, runTranslation } from "../engine/projectWorkflow.js";
 import { createTranslatorAdapter } from "../translation/adapters/adapterFactory.js";
-import { discoverProjectDirs, listEpisodes, loadGlossary, loadProjectMetadata, readAllQAIssues, readTranslation, saveGlossary, saveProjectMetadata, saveQAIssues } from "../storage/projectStore.js";
+import {
+  discoverProjectDirs,
+  listEpisodes,
+  loadGlossary,
+  loadProjectMetadata,
+  readAllQAIssues,
+  readTranslation,
+  saveGlossary,
+  saveProjectMetadata,
+  saveQAIssues,
+  saveTranslation
+} from "../storage/projectStore.js";
 import { readProjectLogTail } from "../storage/logger.js";
-import { translationMarkdownPath } from "../storage/projectPaths.js";
+import { qaEpisodePath, translationJsonPath, translationMarkdownPath } from "../storage/projectPaths.js";
 import { importSourceForUi } from "../ui/actions/importActions.js";
+import { loadProjectUiModel } from "../ui/studioData.js";
 import type { AdapterStatus, TranslationInput, TranslationResult, TranslatorAdapter } from "../domain/translation.js";
 import { nowIso } from "../utils/time.js";
 import { WebImportService } from "../webImport/webImportService.js";
@@ -47,7 +59,7 @@ test("runs dry-run project creation, resume, failed retry, and TXT/EPUB export",
   assert.equal(created.analysis.episodeCount, 3);
   assert.equal(created.glossary.entries.length > 0, true);
 
-  const failingAdapter = createTranslatorAdapter("dry-run", defaultConfig, { failEpisodeIds: ["episode_002"] });
+  const failingAdapter = createTranslatorAdapter("dry-run", defaultConfig, { failEpisodeIds: ["episode_00002"] });
   const firstRun = await runTranslation(created.metadata.projectDir, failingAdapter, "resume", 2);
   assert.equal(firstRun.queued, 3);
   assert.equal(firstRun.completed, 2);
@@ -103,6 +115,98 @@ test("creates a project from pasted source text", async () => {
   assert.equal(created.metadata.sourcePath, "paste://test");
   const overview = await loadProjectOverview(created.metadata.projectDir);
   assert.equal(overview.counts.pending, 2);
+});
+
+test("episode artifacts are ordered numerically and legacy 3-digit files stay readable", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-long-order-"));
+  const projectDir = join(root, "project");
+  await Promise.all([mkdir(join(projectDir, "source"), { recursive: true }), mkdir(join(projectDir, "translated"), { recursive: true }), mkdir(join(projectDir, "logs"), { recursive: true })]);
+  const episode999 = {
+    id: "episode_999",
+    episodeNo: 999,
+    title: "第999話",
+    sourceText: "黒架は歩いた。",
+    body: "黒架は歩いた。",
+    sourceHash: "hash999",
+    metadata: {}
+  };
+  const episode1000 = {
+    id: "episode_1000",
+    episodeNo: 1000,
+    title: "第1000話",
+    sourceText: "聖印が光った。",
+    body: "聖印が光った。",
+    sourceHash: "hash1000",
+    metadata: {}
+  };
+  const episode1001 = {
+    id: "episode_1001",
+    episodeNo: 1001,
+    title: "第1001話",
+    sourceText: "魔導炉が鳴った。",
+    body: "魔導炉が鳴った。",
+    sourceHash: "hash1001",
+    metadata: {}
+  };
+  await Promise.all([
+    writeFile(join(projectDir, "source", "episode_1000.json"), JSON.stringify(episode1000), "utf8"),
+    writeFile(join(projectDir, "source", "episode_999.json"), JSON.stringify(episode999), "utf8"),
+    writeFile(join(projectDir, "source", "episode_01001.json"), JSON.stringify(episode1001), "utf8"),
+    writeFile(
+      join(projectDir, "translated", "episode_999.json"),
+      JSON.stringify({
+        episodeId: "episode_999",
+        titleKo: "제999화",
+        bodyKo: "오래된 번역",
+        usedGlossaryEntries: [],
+        newGlossaryCandidates: [],
+        qaIssueIds: [],
+        model: "legacy",
+        backend: "dry-run",
+        createdAt: nowIso()
+      }),
+      "utf8"
+    ),
+    writeFile(
+      join(projectDir, "logs", "episode_1000.qa.json"),
+      JSON.stringify([{ id: "qa1000", episodeId: "episode_1000", type: "japanese_remaining", severity: "warning", message: "1000", resolved: false, createdAt: nowIso() }]),
+      "utf8"
+    ),
+    writeFile(
+      join(projectDir, "logs", "episode_999.qa.json"),
+      JSON.stringify([{ id: "qa999", episodeId: "episode_999", type: "japanese_remaining", severity: "warning", message: "999", resolved: false, createdAt: nowIso() }]),
+      "utf8"
+    )
+  ]);
+
+  const episodes = await listEpisodes(projectDir);
+  assert.deepEqual(
+    episodes.map((episode) => episode.episodeNo),
+    [999, 1000, 1001]
+  );
+  assert.equal((await readTranslation(projectDir, episodes[0]!))?.bodyKo, "오래된 번역");
+  assert.deepEqual(
+    (await readAllQAIssues(projectDir)).map((issue) => issue.id),
+    ["qa999", "qa1000"]
+  );
+
+  await saveTranslation(projectDir, episodes[0]!, {
+    episodeId: "episode_999",
+    titleKo: "제999화",
+    bodyKo: "갱신된 번역",
+    usedGlossaryEntries: [],
+    newGlossaryCandidates: [],
+    qaIssueIds: [],
+    model: "dry-run",
+    backend: "dry-run",
+    createdAt: nowIso()
+  });
+  await saveQAIssues(projectDir, episodes[0]!, []);
+
+  assert.equal(JSON.parse(await readFile(join(projectDir, "translated", "episode_999.json"), "utf8")).bodyKo, "갱신된 번역");
+  assert.deepEqual(JSON.parse(await readFile(join(projectDir, "logs", "episode_999.qa.json"), "utf8")), []);
+  await assert.rejects(() => access(translationJsonPath(projectDir, 999)));
+  await assert.rejects(() => access(qaEpisodePath(projectDir, 999)));
 });
 
 test("v2 import action does not pin the global default model into project metadata", async () => {
@@ -445,6 +549,9 @@ test("glossary appendix exports only confirmed and locked terms", async () => {
   glossary.updatedAt = now;
   await saveGlossary(created.metadata.projectDir, glossary);
 
+  const model = await loadProjectUiModel(created.metadata.projectDir);
+  assert.equal(model.exportPreview.glossaryAppendixCount, 1);
+
   const exported = await exportProject(await loadProjectMetadata(created.metadata.projectDir), ["txt", "epub"]);
   const txt = await readFile(exported.files.find((file) => file.endsWith(".txt"))!, "utf8");
   const epub = (await readFile(exported.files.find((file) => file.endsWith(".epub"))!)).toString("utf8");
@@ -497,8 +604,8 @@ class EpisodeCandidateAdapter implements TranslatorAdapter {
   }
 
   async translateEpisode(input: TranslationInput): Promise<TranslationResult> {
-    await new Promise((resolve) => setTimeout(resolve, input.episode.id === "episode_001" ? 20 : 0));
-    const candidate = input.episode.id === "episode_001" ? "黒架 => 흑가" : "聖印 => 성인";
+    await new Promise((resolve) => setTimeout(resolve, input.episode.id === "episode_00001" ? 20 : 0));
+    const candidate = input.episode.id === "episode_00001" ? "黒架 => 흑가" : "聖印 => 성인";
     return {
       episodeId: input.episode.id,
       titleKo: `제${input.episode.episodeNo}화`,

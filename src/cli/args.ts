@@ -1,8 +1,31 @@
-export type ParsedArgs = {
+type ParsedArgs = {
   command: string;
   positionals: string[];
   options: Record<string, string | boolean | string[]>;
 };
+
+const valueOptions = new Set([
+  "api-key",
+  "backend",
+  "base-url",
+  "codex-model",
+  "concurrency",
+  "config-dir",
+  "episodes",
+  "fail-episode",
+  "format",
+  "formats",
+  "model",
+  "name",
+  "openai-model",
+  "project",
+  "query",
+  "source",
+  "target",
+  "text",
+  "url",
+  "workspace"
+]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const [command = "bookshelf", ...rest] = argv;
@@ -26,6 +49,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
     const next = rest[index + 1];
+    if (inlineValue === undefined && valueOptions.has(key) && (!next || next.startsWith("--"))) {
+      throw new Error(`Missing value for --${key}.`);
+    }
     const value = inlineValue ?? (next && !next.startsWith("--") ? next : true);
     if (inlineValue === undefined && value === next) {
       index += 1;

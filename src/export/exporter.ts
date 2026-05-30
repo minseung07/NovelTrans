@@ -8,7 +8,7 @@ import { loadExportableTranslations, type ExportableTranslations } from "./expor
 
 export type ExportFormat = "txt" | "epub";
 
-export type ExportSummary = {
+type ExportSummary = {
   files: string[];
   translatedEpisodeCount: number;
 };

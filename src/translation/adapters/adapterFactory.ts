@@ -5,7 +5,7 @@ import { CodexCliAdapter } from "./codexCliAdapter.js";
 import { DryRunAdapter } from "./dryRunAdapter.js";
 import { OpenAICompatibleAdapter } from "./openAICompatibleAdapter.js";
 
-export type AdapterFactoryOptions = {
+type AdapterFactoryOptions = {
   failEpisodeIds?: string[];
   credentialConfigDir?: string;
 };

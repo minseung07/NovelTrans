@@ -3,7 +3,7 @@
 
 export type ColorLevel = 0 | 1 | 2 | 3;
 
-export type CapabilityStream = { isTTY?: boolean };
+type CapabilityStream = { isTTY?: boolean };
 
 export function detectColorLevel(stream?: CapabilityStream, env: NodeJS.ProcessEnv = process.env): ColorLevel {
   const force = env.FORCE_COLOR;

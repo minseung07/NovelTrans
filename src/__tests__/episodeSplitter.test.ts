@@ -17,7 +17,7 @@ test("splits local TXT source into numbered episodes", () => {
 
   const episodes = splitEpisodes(source);
   assert.equal(episodes.length, 3);
-  assert.equal(episodes[0]?.id, "episode_001");
+  assert.equal(episodes[0]?.id, "episode_00001");
   assert.equal(episodes[1]?.title, "第2話 聖印");
   assert.match(episodes[2]?.body ?? "", /戻った/);
 

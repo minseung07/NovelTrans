@@ -1,6 +1,6 @@
 import type { WebImportSite } from "./types.js";
 
-export type DetectedWebImportUrl = {
+type DetectedWebImportUrl = {
   site: WebImportSite;
   url: URL;
 };
@@ -25,8 +25,24 @@ export function detectWebImportUrl(value: string): DetectedWebImportUrl | null {
   return null;
 }
 
-export function isSupportedWebImportUrl(value: string): boolean {
-  return Boolean(detectWebImportUrl(value));
+export function isAllowedWebImportFetchUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  if (host === "kakuyomu.jp" || host === "www.kakuyomu.jp") {
+    return true;
+  }
+  if (host === "ncode.syosetu.com") {
+    return true;
+  }
+  return host === "api.syosetu.com" && url.pathname === "/novelapi/api/";
 }
 
 function normalizeHttps(url: URL): URL {

@@ -8,6 +8,9 @@ import type { TranslationResult } from "../domain/translation.js";
 import { ensureDir, pathExists, readJson, writeJson, writeText } from "./jsonFile.js";
 import {
   episodeSourcePath,
+  legacyQaEpisodePath,
+  legacyTranslationJsonPath,
+  legacyTranslationMarkdownPath,
   projectPaths,
   qaEpisodePath,
   translationJsonPath,
@@ -44,7 +47,7 @@ export async function saveEpisodes(projectDir: string, episodes: Episode[]): Pro
 export async function listEpisodes(projectDir: string): Promise<Episode[]> {
   const paths = projectPaths(projectDir);
   const names = await readdir(paths.sourceDir);
-  const episodeFiles = names.filter((name) => /^episode_\d+\.json$/.test(name)).sort();
+  const episodeFiles = sortedEpisodeArtifactNames(names, /^episode_(\d+)\.json$/);
   return Promise.all(episodeFiles.map((name) => readJson<Episode>(join(paths.sourceDir, name))));
 }
 
@@ -71,42 +74,40 @@ export async function loadGlossary(projectDir: string): Promise<GlossaryData> {
 }
 
 export async function saveTranslation(projectDir: string, episode: Episode, result: TranslationResult): Promise<void> {
-  await writeJson(translationJsonPath(projectDir, episode.episodeNo), result);
-  await writeText(translationMarkdownPath(projectDir, episode.episodeNo), renderTranslationMarkdown(result));
+  await writeJson(await episodeArtifactPath(translationJsonPath(projectDir, episode.episodeNo), legacyTranslationJsonPath(projectDir, episode.episodeNo)), result);
+  await writeText(
+    await episodeArtifactPath(translationMarkdownPath(projectDir, episode.episodeNo), legacyTranslationMarkdownPath(projectDir, episode.episodeNo)),
+    renderTranslationMarkdown(result)
+  );
 }
 
 export async function readTranslation(projectDir: string, episode: Episode): Promise<TranslationResult | null> {
-  const path = translationJsonPath(projectDir, episode.episodeNo);
+  const path = await episodeArtifactPath(
+    translationJsonPath(projectDir, episode.episodeNo),
+    legacyTranslationJsonPath(projectDir, episode.episodeNo)
+  );
   if (!(await pathExists(path))) {
     return null;
   }
   const result = await readJson<TranslationResult>(path);
-  const markdownPath = translationMarkdownPath(projectDir, episode.episodeNo);
+  const markdownPath = await episodeArtifactPath(
+    translationMarkdownPath(projectDir, episode.episodeNo),
+    legacyTranslationMarkdownPath(projectDir, episode.episodeNo)
+  );
   if (!(await isMarkdownNewer(markdownPath, path))) {
     return result;
   }
   return applyMarkdownEdit(result, await readFile(markdownPath, "utf8"));
 }
 
-export async function listTranslations(projectDir: string, episodes: Episode[]): Promise<TranslationResult[]> {
-  const results: TranslationResult[] = [];
-  for (const episode of episodes) {
-    const result = await readTranslation(projectDir, episode);
-    if (result) {
-      results.push(result);
-    }
-  }
-  return results;
-}
-
 export async function saveQAIssues(projectDir: string, episode: Episode, issues: QAIssue[]): Promise<void> {
-  await writeJson(qaEpisodePath(projectDir, episode.episodeNo), issues);
+  await writeJson(await episodeArtifactPath(qaEpisodePath(projectDir, episode.episodeNo), legacyQaEpisodePath(projectDir, episode.episodeNo)), issues);
 }
 
 export async function updateQAIssue(projectDir: string, issueId: string, patch: Partial<QAIssue>): Promise<QAIssue | null> {
   const episodes = await listEpisodes(projectDir);
   for (const episode of episodes) {
-    const path = qaEpisodePath(projectDir, episode.episodeNo);
+    const path = await episodeArtifactPath(qaEpisodePath(projectDir, episode.episodeNo), legacyQaEpisodePath(projectDir, episode.episodeNo));
     if (!(await pathExists(path))) {
       continue;
     }
@@ -134,7 +135,7 @@ export async function readAllQAIssues(projectDir: string): Promise<QAIssue[]> {
     return [];
   }
   const names = await readdir(paths.logsDir);
-  const issueFiles = names.filter((name) => /^episode_\d+\.qa\.json$/.test(name)).sort();
+  const issueFiles = sortedEpisodeArtifactNames(names, /^episode_(\d+)\.qa\.json$/);
   const nested = await Promise.all(issueFiles.map((name) => readJson<QAIssue[]>(join(paths.logsDir, name))));
   return nested.flat();
 }
@@ -241,4 +242,32 @@ function splitMarkdownSections(markdown: string): { forewordKo?: string; bodyKo:
 function nextSectionIndex(lines: string[], headingIndex: number): number {
   const index = lines.findIndex((line, lineIndex) => lineIndex > headingIndex && /^##\s+/.test(line.trim()));
   return index >= 0 ? index : lines.length;
+}
+
+function sortedEpisodeArtifactNames(names: string[], pattern: RegExp): string[] {
+  const byEpisodeNo = new Map<number, string>();
+  for (const name of names) {
+    const match = name.match(pattern);
+    const episodeNo = match?.[1] ? Number(match[1]) : NaN;
+    if (!Number.isInteger(episodeNo) || episodeNo < 1) {
+      continue;
+    }
+    const current = byEpisodeNo.get(episodeNo);
+    if (!current || name.length > current.length) {
+      byEpisodeNo.set(episodeNo, name);
+    }
+  }
+  return Array.from(byEpisodeNo.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([, name]) => name);
+}
+
+async function episodeArtifactPath(primaryPath: string, legacyPath: string): Promise<string> {
+  if (await pathExists(primaryPath)) {
+    return primaryPath;
+  }
+  if (await pathExists(legacyPath)) {
+    return legacyPath;
+  }
+  return primaryPath;
 }

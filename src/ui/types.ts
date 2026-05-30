@@ -4,18 +4,6 @@ import type { GlossaryData, GlossaryEntry } from "../domain/glossary.js";
 import type { ProjectOverview } from "../domain/project.js";
 import type { QAIssue } from "../domain/qa.js";
 
-export type StudioSpace =
-  | "bookshelf"
-  | "studio"
-  | "glossary-lab"
-  | "review-desk"
-  | "export-room"
-  | "failure-recovery"
-  | "command-palette"
-  | "project-search"
-  | "settings"
-  | "help";
-
 export type BookshelfProject = {
   projectDir: string;
   title: string;
@@ -97,7 +85,7 @@ export type ProjectTimelineItem = {
   severity: "info" | "warning" | "error";
 };
 
-export type ReviewIssueBucket = {
+type ReviewIssueBucket = {
   id: string;
   label: string;
   count: number;
@@ -132,55 +120,6 @@ export type GlossaryQueueItem = {
 
 export type GlossaryQueueFilter = "all" | "conflicts" | "candidates";
 
-export type SettingsViewMode = "basic" | "advanced";
-
-export type AdvancedSettingsItemId =
-  | "default-backend"
-  | "codex-command"
-  | "api-key"
-  | "openai-model"
-  | "codex-model"
-  | "openai-base-url"
-  | "concurrency"
-  | "temperature"
-  | "reasoning-effort"
-  | "glossary-strictness"
-  | "qa-japanese"
-  | "qa-number"
-  | "qa-length"
-  | "qa-glossary"
-  | "output-txt"
-  | "output-epub"
-  | "epub-afterword"
-  | "epub-vertical-writing"
-  | "epub-glossary-appendix";
-
-export type AdvancedSettingsItemKind = "toggle" | "enum" | "number" | "input" | "secret";
-
-export type AdvancedSettingsOption = {
-  label: string;
-  value: string;
-  custom?: boolean;
-};
-
-export type AdvancedSettingsItem = {
-  id: AdvancedSettingsItemId;
-  label: string;
-  value: string;
-  rawValue?: string;
-  kind: AdvancedSettingsItemKind;
-  options?: AdvancedSettingsOption[];
-  min?: number;
-  max?: number;
-  step?: number;
-};
-
-export type AdvancedSettingsSection = {
-  id: string;
-  title: string;
-  items: AdvancedSettingsItem[];
-};
-
 export type PaletteCommand = {
   id: string;
   label: string;
@@ -197,7 +136,7 @@ export type NextActionRecommendation = {
   commandHint: string;
 };
 
-export type FailureRecoveryItem = {
+type FailureRecoveryItem = {
   episodeId: string;
   episodeNo: number;
   title: string;

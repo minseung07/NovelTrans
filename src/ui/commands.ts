@@ -58,10 +58,6 @@ export function filterPaletteCommands(query: string, hasProject: boolean): Palet
     .slice(0, 8);
 }
 
-export function isConfirmingPaletteCommand(commandId: string): boolean {
-  return Boolean(paletteCommands.find((command) => command.id === commandId)?.requiresConfirmation);
-}
-
 function paletteScore(command: PaletteCommand, normalized: string): number {
   const id = command.id.toLowerCase();
   const label = command.label.toLowerCase();

@@ -5,7 +5,7 @@ import { ProjectStateStore } from "../../storage/stateStore.js";
 import { writeProjectLog } from "../../storage/logger.js";
 import { nowIso } from "../../utils/time.js";
 
-export async function skipFailedEpisodes(projectDir: string): Promise<number> {
+async function skipFailedEpisodes(projectDir: string): Promise<number> {
   const metadata = await loadProjectMetadata(projectDir);
   const stateStore = new ProjectStateStore(projectPaths(projectDir).projectDb);
   let skipped = 0;

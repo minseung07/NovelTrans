@@ -11,12 +11,15 @@ export type QAIssueType =
   | "repetition"
   | "other";
 
+export type QAIssueSection = "foreword" | "body" | "afterword";
+
 export type QAIssue = {
   id: string;
   episodeId: string;
   type: QAIssueType;
   severity: "info" | "warning" | "error";
   message: string;
+  section?: QAIssueSection;
   sourceParagraphIndex?: number;
   targetParagraphIndex?: number;
   sourceSnippet?: string;

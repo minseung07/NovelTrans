@@ -5,7 +5,7 @@ import { loadProjectMetadata, saveProjectMetadata } from "../../storage/projectS
 import { createTranslatorAdapter } from "../../translation/adapters/adapterFactory.js";
 import { nowIso } from "../../utils/time.js";
 
-export type TranslationJobRuntime = {
+type TranslationJobRuntime = {
   config: NovelTransConfig;
   configDir?: string;
 };

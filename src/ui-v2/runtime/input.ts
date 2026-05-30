@@ -3,7 +3,7 @@
 // multiple keypresses packed into one chunk. No legacy string-key conversion:
 // the runtime consumes KeyEvents directly.
 
-export type KeyName =
+type KeyName =
   | "up" | "down" | "left" | "right"
   | "enter" | "escape" | "tab" | "backtab"
   | "backspace" | "home" | "end" | "pageup" | "pagedown" | "delete";

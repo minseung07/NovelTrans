@@ -2,45 +2,6 @@ import type { NovelTransConfig } from "../../domain/config.js";
 import { saveConfig } from "../../config/configStore.js";
 import { codexCliModelPresets, openAICompatibleModelPresets } from "../../config/modelPresets.js";
 
-export type RecipePresetId = 1 | 2 | 3 | 4 | 5 | 6;
-
-export function applyRecipePreset(config: NovelTransConfig, preset: RecipePresetId): NovelTransConfig {
-  if (preset === 1) {
-    return { ...config, translationStyle: "fast-draft", concurrency: 4, glossaryStrictness: "medium" };
-  }
-  if (preset === 2) {
-    return { ...config, translationStyle: "balanced-webnovel", concurrency: 4, glossaryStrictness: "high" };
-  }
-  if (preset === 3) {
-    return {
-      ...config,
-      translationStyle: "literary-naturalization",
-      concurrency: 2,
-      glossaryStrictness: "medium",
-      openAICompatible: { ...config.openAICompatible, temperature: 0.4 }
-    };
-  }
-  if (preset === 4) {
-    return {
-      ...config,
-      translationStyle: "literal-preserve",
-      concurrency: 2,
-      glossaryStrictness: "high",
-      openAICompatible: { ...config.openAICompatible, temperature: 0.1 }
-    };
-  }
-  if (preset === 5) {
-    return { ...config, translationStyle: "terminology-consistency", concurrency: 2, glossaryStrictness: "strict" };
-  }
-  return { ...config, translationStyle: "custom" };
-}
-
-export async function saveRecipePreset(config: NovelTransConfig, preset: RecipePresetId, configDir?: string): Promise<NovelTransConfig> {
-  const next = applyRecipePreset(config, preset);
-  await saveConfig(next, configDir);
-  return next;
-}
-
 export async function cycleDefaultBackend(config: NovelTransConfig, configDir?: string): Promise<NovelTransConfig> {
   const backends: NovelTransConfig["defaultBackend"][] = ["dry-run", "openai-compatible", "codex-cli"];
   const currentIndex = backends.indexOf(config.defaultBackend);
@@ -71,7 +32,7 @@ export async function toggleDefaultOutputFormat(config: NovelTransConfig, format
   return next;
 }
 
-export async function cycleOpenAICompatibleModel(config: NovelTransConfig, configDir?: string): Promise<NovelTransConfig> {
+async function cycleOpenAICompatibleModel(config: NovelTransConfig, configDir?: string): Promise<NovelTransConfig> {
   const model = nextPreset(openAICompatibleModelPresets, config.openAICompatible.model);
   return setOpenAICompatibleModel(config, model, configDir);
 }
@@ -97,7 +58,7 @@ export async function setOpenAICompatibleModel(config: NovelTransConfig, model: 
   return next;
 }
 
-export async function cycleCodexCliModel(config: NovelTransConfig, configDir?: string): Promise<NovelTransConfig> {
+async function cycleCodexCliModel(config: NovelTransConfig, configDir?: string): Promise<NovelTransConfig> {
   const model = nextPreset(codexCliModelPresets, config.codexCli.model);
   return setCodexCliModel(config, model, configDir);
 }

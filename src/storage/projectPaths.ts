@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { padEpisodeNo } from "../utils/path.js";
+import { legacyPadEpisodeNo, padEpisodeNo } from "../utils/path.js";
 
-export type ProjectPaths = {
+type ProjectPaths = {
   root: string;
   projectJson: string;
   projectDb: string;
@@ -45,10 +45,22 @@ export function translationJsonPath(projectDir: string, episodeNo: number): stri
   return join(projectDir, "translated", `episode_${padEpisodeNo(episodeNo)}.json`);
 }
 
+export function legacyTranslationJsonPath(projectDir: string, episodeNo: number): string {
+  return join(projectDir, "translated", `episode_${legacyPadEpisodeNo(episodeNo)}.json`);
+}
+
 export function translationMarkdownPath(projectDir: string, episodeNo: number): string {
   return join(projectDir, "translated", `episode_${padEpisodeNo(episodeNo)}.md`);
 }
 
+export function legacyTranslationMarkdownPath(projectDir: string, episodeNo: number): string {
+  return join(projectDir, "translated", `episode_${legacyPadEpisodeNo(episodeNo)}.md`);
+}
+
 export function qaEpisodePath(projectDir: string, episodeNo: number): string {
   return join(projectDir, "logs", `episode_${padEpisodeNo(episodeNo)}.qa.json`);
+}
+
+export function legacyQaEpisodePath(projectDir: string, episodeNo: number): string {
+  return join(projectDir, "logs", `episode_${legacyPadEpisodeNo(episodeNo)}.qa.json`);
 }

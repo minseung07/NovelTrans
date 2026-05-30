@@ -2,9 +2,9 @@
 // frames, eliminating the full-screen clear flicker. Absolute cursor addressing
 // keeps it correct in raw mode.
 
-export type RenderTarget = { write(data: string): void };
+type RenderTarget = { write(data: string): void };
 
-export interface DiffRenderer {
+interface DiffRenderer {
   render(frame: string): void;
   invalidate(): void;
   clear(): void;

@@ -8,5 +8,9 @@ export function slugify(value: string): string {
 }
 
 export function padEpisodeNo(value: number): string {
+  return String(value).padStart(5, "0");
+}
+
+export function legacyPadEpisodeNo(value: number): string {
   return String(value).padStart(3, "0");
 }

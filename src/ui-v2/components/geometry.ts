@@ -50,7 +50,7 @@ export function row(left: string[], leftWidth: number, right: string[], gap = 2)
   return out;
 }
 
-export type VisibleWindow<T> = {
+type VisibleWindow<T> = {
   items: T[];
   selectedOffset: number;
   hiddenBefore: number;

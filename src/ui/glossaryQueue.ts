@@ -24,22 +24,6 @@ export function selectedGlossaryQueueItem(
   return queue[selectedIndex] ?? queue[0] ?? null;
 }
 
-export function deferSelectedGlossaryQueueItem(
-  model: ProjectUiModel,
-  selectedIndex: number,
-  filter: GlossaryQueueFilter = "all",
-  deferredEntryIds: string[] = []
-): { deferredEntryIds: string[]; message: string } {
-  const selected = selectedGlossaryQueueItem(model, selectedIndex, filter, deferredEntryIds);
-  if (!selected) {
-    return { deferredEntryIds, message: "선택된 용어가 없습니다." };
-  }
-  return {
-    deferredEntryIds: [...deferredEntryIds.filter((entryId) => entryId !== selected.entry.id), selected.entry.id],
-    message: `나중에 볼 용어로 보냈습니다: ${selected.entry.source}`
-  };
-}
-
 function matchesFilter(status: string, isConflict: boolean, filter: GlossaryQueueFilter): boolean {
   if (filter === "conflicts") {
     return isConflict;

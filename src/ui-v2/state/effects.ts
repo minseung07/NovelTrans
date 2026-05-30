@@ -46,7 +46,7 @@ export type Effect =
   | { kind: "config"; op: SettingsOp }
   | { kind: "dismiss" };
 
-export interface EffectDeps {
+interface EffectDeps {
   config: NovelTransConfig;
   configDir?: string;
   projectRoot: string;

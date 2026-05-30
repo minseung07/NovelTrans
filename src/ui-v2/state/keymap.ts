@@ -4,11 +4,11 @@
 
 import type { KeyEvent } from "../runtime/input.js";
 
-export type Context = "library" | "project";
+type Context = "library" | "project";
 
-export type Action = "quit" | "move-up" | "move-down" | "open" | "back" | "search" | "import" | "translate" | "palette" | "help" | "settings";
+type Action = "quit" | "move-up" | "move-down" | "open" | "back" | "search" | "import" | "translate" | "palette" | "help" | "settings";
 
-export interface Binding {
+interface Binding {
   action: Action;
   context: Context;
   keys: string[];

@@ -15,7 +15,3 @@ export function box(title: string, lines: string[], width?: number): string[] {
   const bottom = `${bl}${h.repeat(normalizedWidth - 2)}${br}`;
   return [top, ...lines.map((line) => `${v} ${padRight(truncate(line, innerWidth), innerWidth)} ${v}`), bottom];
 }
-
-// A panel is a box; the alias lets screens express intent ("static panel" vs
-// "card") without diverging implementations.
-export const panel = box;

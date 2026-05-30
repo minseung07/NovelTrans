@@ -15,7 +15,7 @@ export interface KeyContext<Msg> {
   quit: () => void;
 }
 
-export interface Program<Model, Msg, Effect> {
+interface Program<Model, Msg, Effect> {
   init: Model;
   initEffects?: Effect[];
   update(model: Model, msg: Msg): [Model, Effect[]];
@@ -24,7 +24,7 @@ export interface Program<Model, Msg, Effect> {
   runEffect(effect: Effect, dispatch: Dispatch<Msg>): void | (() => void);
 }
 
-export interface RunOptions {
+interface RunOptions {
   terminal?: Terminal;
   escTimeoutMs?: number;
 }

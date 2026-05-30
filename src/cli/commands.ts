@@ -24,7 +24,7 @@ import { WebImportService } from "../webImport/webImportService.js";
 import { parseArgs, getBooleanOption, getListOption, getStringOption, requireStringOption } from "./args.js";
 import { renderProjectStatus } from "./render.js";
 
-export type CliIO = {
+type CliIO = {
   stdout: Pick<typeof console, "log">;
   stderr: Pick<typeof console, "error">;
 };
