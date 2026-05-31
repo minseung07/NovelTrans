@@ -50,7 +50,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     const next = rest[index + 1];
     if (inlineValue === undefined && valueOptions.has(key) && (!next || next.startsWith("--"))) {
-      throw new Error(`Missing value for --${key}.`);
+      throw new Error(`--${key} 옵션에 값이 필요합니다.`);
     }
     const value = inlineValue ?? (next && !next.startsWith("--") ? next : true);
     if (inlineValue === undefined && value === next) {
@@ -94,7 +94,7 @@ export function getListOption(args: ParsedArgs, name: string): string[] {
 export function requireStringOption(args: ParsedArgs, name: string): string {
   const value = getStringOption(args, name);
   if (!value) {
-    throw new Error(`Missing required option --${name}.`);
+    throw new Error(`필수 옵션 --${name}이(가) 없습니다.`);
   }
   return value;
 }

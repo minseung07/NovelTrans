@@ -117,7 +117,7 @@ export async function runCli(argv: string[], io: CliIO = { stdout: console, stde
         await commandSelfTest(args, io);
         return 0;
       default:
-        throw new Error(`Unknown command: ${args.command}. Run "noveltrans help".`);
+        throw new Error(`알 수 없는 명령입니다: ${args.command}. "noveltrans help"를 실행하세요.`);
     }
   } catch (error) {
     io.stderr.error((error as Error).message);
@@ -188,7 +188,7 @@ async function importFromWebUrl(
 ): Promise<Awaited<ReturnType<typeof createProjectFromText>>> {
   const range = getStringOption(args, "episodes");
   if (!range) {
-    throw new Error("URL import requires --episodes. Example: --episodes 1-10");
+    throw new Error("URL 가져오기는 --episodes가 필요합니다. 예: --episodes 1-10");
   }
   const service = new WebImportService();
   const work = await service.loadWork(requireStringOption(args, "url"));
@@ -208,6 +208,11 @@ async function commandTranslate(args: ReturnType<typeof parseArgs>, io: CliIO, m
     await saveProjectMetadata(metadata);
   }
   const backend = getStringOption(args, "backend") ?? metadata.options.backend ?? config.defaultBackend;
+  if (backend === "dry-run") {
+    io.stderr.error(
+      "경고: dry-run 백엔드는 실제 번역이 아닌 자리표시자 텍스트를 만듭니다. 실제 번역은 \"noveltrans config set --backend openai-compatible\"로 엔진을 설정하세요."
+    );
+  }
   const failEpisodeIds = getListOption(args, "fail-episode");
   const adapter = createTranslatorAdapter(backend, config, { failEpisodeIds, credentialConfigDir: getStringOption(args, "config-dir") });
   const summary = await runTranslation(projectDir, adapter, mode, numberOption(args, "concurrency", metadata.options.concurrency), config.qa);
@@ -249,7 +254,7 @@ async function commandFailureRecovery(args: ReturnType<typeof parseArgs>, io: Cl
     return;
   }
   if (action !== "screen") {
-    throw new Error(`Unknown failure recovery action: ${action}.`);
+    throw new Error(`알 수 없는 실패 복구 작업입니다: ${action}.`);
   }
   const config = await loadConfigFromArgs(args);
   io.stdout.log(await renderProjectStageStatic(config, projectDir, "translate"));
@@ -270,7 +275,7 @@ async function commandExport(args: ReturnType<typeof parseArgs>, io: CliIO): Pro
   const requestedFormats = getListOption(args, "format").concat(getListOption(args, "formats"));
   const formats = (requestedFormats.length > 0 ? requestedFormats : metadata.outputOptions.formats).filter(isExportFormat);
   if (formats.length === 0) {
-    throw new Error("No supported export format requested.");
+    throw new Error("지원하는 출력 형식이 지정되지 않았습니다.");
   }
   const summary = await exportProject(metadata, formats);
   io.stdout.log(`${summary.translatedEpisodeCount}개 번역 화를 결과물로 만들었습니다.`);
@@ -360,7 +365,7 @@ async function commandGlossary(args: ReturnType<typeof parseArgs>, io: CliIO): P
     return;
   }
 
-  throw new Error(`Unknown glossary action: ${action}.`);
+  throw new Error(`알 수 없는 용어집 작업입니다: ${action}.`);
 }
 
 async function commandConfig(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
@@ -382,7 +387,7 @@ async function commandConfig(args: ReturnType<typeof parseArgs>, io: CliIO): Pro
     const backend = getStringOption(args, "backend");
     if (backend) {
       if (!isSupportedBackend(backend)) {
-        throw new Error(`Unsupported backend: ${backend}.`);
+        throw new Error(`지원하지 않는 백엔드입니다: ${backend}.`);
       }
       config = { ...config, defaultBackend: backend };
     }
@@ -402,7 +407,7 @@ async function commandConfig(args: ReturnType<typeof parseArgs>, io: CliIO): Pro
     io.stdout.log(JSON.stringify(config, null, 2));
     return;
   }
-  throw new Error(`Unknown config action: ${action}.`);
+  throw new Error(`알 수 없는 설정 작업입니다: ${action}.`);
 }
 
 async function commandAuth(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
@@ -433,7 +438,7 @@ async function commandAuth(args: ReturnType<typeof parseArgs>, io: CliIO): Promi
     return;
   }
 
-  throw new Error(`Unknown auth action: ${action}.`);
+  throw new Error(`알 수 없는 인증 작업입니다: ${action}.`);
 }
 
 async function commandSelfTest(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
@@ -501,30 +506,40 @@ async function loadConfigFromArgs(args: ReturnType<typeof parseArgs>) {
 
 function renderHelp(): string {
   return [
-    "NovelTrans",
+    "NovelTrans — 일본어 웹소설 한국어 번역 도구",
     "",
-    "Commands:",
-    "  app [--workspace projects]",
-    "  bookshelf [--workspace projects]",
-    "  import --source source.txt [--name Title] [--workspace projects]",
-    "  import --url https://kakuyomu.jp/works/... --episodes 1-10",
-    "  translate --project projects/title [--backend dry-run] [--model gpt-5.5]",
-    "  retry --project projects/title",
-    "  status --project projects/title",
-    "  studio --project projects/title",
-    "  glossary-lab --project projects/title",
-    "  review-desk --project projects/title",
-    "  failure-recovery --project projects/title [screen|skip-and-export|logs]",
-    "  export-room --project projects/title",
-    "  palette [--project projects/title] [--query glossary]",
-    "  glossary --project projects/title [summary|conflicts|set|forbid|discard]",
-    "  export --project projects/title --formats txt,epub",
-    "  qa --project projects/title",
-    "  config [show|init|set] [--backend openai-compatible] [--openai-model gpt-5.5] [--codex-model gpt-5.5]",
-    "  auth status",
-    "  auth set-openai-key --api-key sk-... | --stdin",
-    "  auth clear-openai-key",
-    "  self-test --workspace tmp/self-test"
+    "사용법:",
+    "  noveltrans <명령> [옵션]",
+    "",
+    "핵심 명령:",
+    "  app                대화형 터미널 앱 실행 (별칭: ui)",
+    "  import             원문 가져오기: --source 파일 | --url | --text | --stdin (별칭: create)",
+    "  translate          번역 이어가기 --project <경로> [--backend] [--model]",
+    "  retry              실패한 화만 다시 번역 --project <경로>",
+    "  status             프로젝트 진행 상황 보기 --project <경로>",
+    "  glossary           용어집 작업 --project <경로> [summary|conflicts|set|forbid|discard]",
+    "  qa                 QA 재검사 실행 --project <경로>",
+    "  export             결과물 생성 --project <경로> --formats txt,epub",
+    "  config             설정 보기/초기화/변경 [show|init|set]",
+    "  auth               OpenAI 호환 API 키 관리 [status|set-openai-key|clear-openai-key] (별칭: credentials)",
+    "  self-test          dry-run 스모크 테스트 실행 --workspace tmp/self-test",
+    "",
+    "앱 화면 미리보기 (비대화형 스냅샷 출력):",
+    "  bookshelf          책장(프로젝트 목록) 출력",
+    "  studio             프로젝트 작업실 개요 출력",
+    "  glossary-lab       용어집 화면 출력 (별칭: lab)",
+    "  review-desk        검수 화면 출력 (별칭: review)",
+    "  failure-recovery   실패 복구 [screen|skip-and-export|logs] (별칭: recover)",
+    "  export-room        결과물 제작 화면 출력 (별칭: room)",
+    "  palette            명령 팔레트 미리보기 [--query glossary]",
+    "",
+    "전역 옵션:",
+    "  --workspace <경로>   프로젝트 루트 (기본: ./projects)",
+    "  --config-dir <경로>  설정/인증 디렉터리 (기본: ~/.config/noveltrans)",
+    "",
+    "예시:",
+    "  noveltrans import --url https://kakuyomu.jp/works/... --episodes 1-10",
+    "  noveltrans translate --project projects/title --backend openai-compatible"
   ].join("\n");
 }
 

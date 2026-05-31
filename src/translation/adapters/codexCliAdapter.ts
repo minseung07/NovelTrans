@@ -33,24 +33,24 @@ export class CodexCliAdapter implements TranslatorAdapter {
       if (version.code !== 0) {
         return {
           available: false,
-          message: `codex CLI did not respond successfully: ${summarizeCodexOutput(version)}`
+          message: `codex CLI가 정상적으로 응답하지 않았습니다: ${summarizeCodexOutput(version)}`
         };
       }
       const login = await runCodexCommand(this.options.command, ["login", "status"], Math.min(this.options.timeoutMs, 10000));
       if (login.code !== 0) {
         return {
           available: false,
-          message: `codex CLI is installed but not logged in: ${summarizeCodexOutput(login)}`
+          message: `codex CLI는 설치되어 있지만 로그인되어 있지 않습니다 (not logged in): ${summarizeCodexOutput(login)}`
         };
       }
       return {
         available: true,
-        message: `codex CLI is available and logged in. ${login.stdout || login.stderr}`.trim()
+        message: `codex CLI를 사용할 수 있으며 로그인되어 있습니다. ${login.stdout || login.stderr}`.trim()
       };
     } catch (error) {
       return {
         available: false,
-        message: isMissingCommandError(error) ? "codex CLI was not found on PATH." : (error as Error).message
+        message: isMissingCommandError(error) ? "codex CLI를 PATH에서 찾을 수 없습니다." : (error as Error).message
       };
     }
   }
@@ -68,7 +68,7 @@ export class CodexCliAdapter implements TranslatorAdapter {
       await runCodexExec({ ...this.options, model }, outputPath, renderPrompt(input), input.signal);
       const content = (await readFile(outputPath, "utf8")).trim();
       if (!content) {
-        throw new Error("codex CLI produced an empty translation.");
+        throw new Error("codex CLI가 빈 번역을 반환했습니다.");
       }
       const parsed = parseTranslationResponse(content, input.episode.title);
       return {
@@ -109,7 +109,7 @@ async function runCodexExec(options: CodexCliAdapterOptions, outputPath: string,
 
   const result = await runCodexCommand(options.command, args, options.timeoutMs, prompt, signal);
   if (result.code !== 0) {
-    throw new Error(`codex CLI failed with exit code ${result.code}: ${summarizeCodexOutput(result)}`);
+    throw new Error(`codex CLI가 종료 코드 ${result.code}로 실패했습니다: ${summarizeCodexOutput(result)}`);
   }
 }
 

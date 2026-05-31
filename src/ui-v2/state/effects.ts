@@ -23,6 +23,7 @@ import { importSourceForUi, importBaseOptions, type UiWebImportOptions } from ".
 import { WebImportService, webImportConsentMessage } from "../../webImport/webImportService.js";
 import type { WebImportPreview } from "../../webImport/types.js";
 import { createProjectAdapter, createProjectTranslationSession } from "../../ui/actions/translationJobActions.js";
+import { createTranslatorAdapter } from "../../translation/adapters/adapterFactory.js";
 import { saveOpenAICompatibleApiKey } from "../../config/credentialStore.js";
 import { saveConfig } from "../../config/configStore.js";
 import { loadProjectUiModel } from "../data/project.js";
@@ -52,6 +53,7 @@ export type Effect =
   | { kind: "config"; op: SettingsOp }
   | { kind: "save-api-key"; apiKey: string }
   | { kind: "save-base-url"; baseUrl: string }
+  | { kind: "setup-validate"; real: boolean }
   | { kind: "dismiss" };
 
 interface EffectDeps {
@@ -314,6 +316,31 @@ export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch:
           dispatch({ type: "config-updated", config: currentConfig });
         } catch (error) {
           dispatch({ type: "action-done", message: (error as Error).message, level: "critical" });
+        }
+      })();
+      return;
+    }
+    if (effect.kind === "setup-validate") {
+      void (async () => {
+        try {
+          const adapter = createTranslatorAdapter(currentConfig.defaultBackend, currentConfig, { credentialConfigDir: deps.configDir });
+          const status = await adapter.checkAvailability();
+          if (!status.available) {
+            dispatch({ type: "setup-validated", ok: false, message: status.message });
+            return;
+          }
+          if (!effect.real) {
+            dispatch({ type: "setup-validated", ok: true, message: status.message });
+            return;
+          }
+          await adapter.translateEpisode({
+            episode: { id: "setup-test", episodeNo: 0, title: "テスト", sourceText: "テスト。", body: "テスト。", sourceHash: "", metadata: {} },
+            glossaryEntries: [],
+            glossaryContext: ""
+          });
+          dispatch({ type: "setup-validated", ok: true, message: "실제 번역 테스트에 성공했습니다." });
+        } catch (error) {
+          dispatch({ type: "setup-validated", ok: false, message: (error as Error).message });
         }
       })();
       return;

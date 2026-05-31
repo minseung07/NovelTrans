@@ -6,7 +6,9 @@
 import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 import type { ReadStream, WriteStream } from "node:tty";
 import type { NovelTransConfig } from "../domain/config.js";
-import { resolveProjectRoot } from "../config/configStore.js";
+import { resolveProjectRoot, getConfigPath } from "../config/configStore.js";
+import { loadOpenAICompatibleApiKey } from "../config/credentialStore.js";
+import { pathExists } from "../storage/jsonFile.js";
 import { createTheme, setTheme, getTheme } from "./theme/theme.js";
 import { detectColorLevel, detectUnicode } from "./theme/capabilities.js";
 import { createTerminal } from "./runtime/terminal.js";
@@ -22,13 +24,14 @@ import { MAX_SCREEN_WIDTH, truncate } from "./components/text.js";
 import { loadBookshelfModel } from "./data/library.js";
 import { initModel, type AppModel } from "./state/model.js";
 import { update } from "./state/update.js";
+import { shouldConfirmQuit } from "./state/update.js";
 import type { Msg } from "./state/msg.js";
 import { createEffectRunner, type Effect } from "./state/effects.js";
 import { contextHints, keyToken, resolveAction } from "./state/keymap.js";
 import { renderLibrary } from "./screens/library.js";
 import { renderProject, projectOf, STAGE_LABELS, STAGE_ORDER } from "./screens/project/index.js";
 import { jobSegment } from "./screens/project/overview.js";
-import { renderHelp, renderSettings, renderPalette } from "./screens/overlays.js";
+import { renderHelp, renderSettings, renderPalette, renderSetup } from "./screens/overlays.js";
 
 interface UiV2Options {
   config: NovelTransConfig;
@@ -45,7 +48,8 @@ function contentWidth(size: TerminalSize): number {
 function statusParts(model: AppModel): string[] {
   const meta = [`백엔드 ${model.config.defaultBackend}`, `모델 ${model.config.defaultModel}`, `동시 ${model.config.concurrency}`];
   const job = model.job ? [jobSegment(model.job, model.tick)] : [];
-  return [...meta, ...job, ...contextHints(model.route.screen)];
+  const refresh = model.libraryLoading ? ["책장 새로고침 중…"] : [];
+  return [...meta, ...job, ...refresh, ...contextHints(model.route.screen)];
 }
 
 function renderOverlay(model: AppModel, width: number): string[] {
@@ -58,6 +62,12 @@ function renderOverlay(model: AppModel, width: number): string[] {
   }
   if (overlay.kind === "palette") {
     return renderPalette(overlay.query, overlay.selected, model.route.screen === "project", width);
+  }
+  if (overlay.kind === "notice") {
+    return modal(overlay.level === "critical" ? "오류" : "알림", [...overlay.message.split("\n"), "", "[Esc] 닫기"], width);
+  }
+  if (overlay.kind === "setup") {
+    return renderSetup(model.config, overlay.step, overlay.validation, width);
   }
   const lines = overlay.message.split("\n");
   return modal("확인", overlay.message.includes("[Y]") ? lines : [...lines, "", "[Y] 예   [N] 아니오"], width);
@@ -145,6 +155,10 @@ function handleTranslateKey(token: string, dispatch: Dispatch<Msg>): boolean {
     dispatch({ type: "translate-pause" });
     return true;
   }
+  if (token === "x") {
+    dispatch({ type: "translate-cancel" });
+    return true;
+  }
   if (token === "s") {
     dispatch({ type: "open-overlay", overlay: { kind: "confirm", message: "실패 화를 건너뛰고 결과물을 생성할까요?", action: "skip-export" } });
     return true;
@@ -177,11 +191,16 @@ function handleExportKey(token: string, dispatch: Dispatch<Msg>): boolean {
   return false;
 }
 
-function handleOverlayKey(model: AppModel, event: KeyEvent, token: string, dispatch: Dispatch<Msg>): void {
+function handleOverlayKey(model: AppModel, event: KeyEvent, token: string, ctx: KeyContext<Msg>): void {
+  const { dispatch, quit } = ctx;
   const overlay = model.overlay!;
   if (overlay.kind === "confirm") {
     if (token === "y" || token === "enter") {
-      dispatch({ type: "confirm-yes" });
+      if (overlay.action === "quit") {
+        quit();
+      } else {
+        dispatch({ type: "confirm-yes" });
+      }
     } else if (token === "n" || token === "escape") {
       dispatch({ type: "close-overlay" });
     }
@@ -206,11 +225,30 @@ function handleOverlayKey(model: AppModel, event: KeyEvent, token: string, dispa
     return;
   }
   if (overlay.kind === "settings") {
-    const ops: Record<string, Msg> = { b: { type: "settings-op", op: "cycle-backend" }, m: { type: "settings-op", op: "cycle-model" }, g: { type: "settings-op", op: "cycle-strictness" }, "+": { type: "settings-op", op: "inc-concurrency" }, "=": { type: "settings-op", op: "inc-concurrency" }, "-": { type: "settings-op", op: "dec-concurrency" }, t: { type: "settings-op", op: "toggle-txt" }, e: { type: "settings-op", op: "toggle-epub" }, k: { type: "settings-edit", field: "api-key" }, u: { type: "settings-edit", field: "base-url" } };
+    const ops: Record<string, Msg> = { b: { type: "settings-op", op: "cycle-backend" }, m: { type: "settings-op", op: "cycle-model" }, g: { type: "settings-op", op: "cycle-strictness" }, "+": { type: "settings-op", op: "inc-concurrency" }, "=": { type: "settings-op", op: "inc-concurrency" }, "-": { type: "settings-op", op: "dec-concurrency" }, t: { type: "settings-op", op: "toggle-txt" }, e: { type: "settings-op", op: "toggle-epub" }, k: { type: "settings-edit", field: "api-key" }, u: { type: "settings-edit", field: "base-url" }, w: { type: "setup-open" } };
     if (token === "escape" || token === "q") {
       dispatch({ type: "close-overlay" });
     } else if (ops[token]) {
       dispatch(ops[token]!);
+    }
+    return;
+  }
+  if (overlay.kind === "setup") {
+    if (token === "escape") {
+      dispatch({ type: "close-overlay" });
+    } else if (overlay.step === "engine") {
+      if (token === "b") dispatch({ type: "settings-op", op: "cycle-backend" });
+      else if (token === "enter") dispatch({ type: "setup-step", step: "model" });
+    } else if (overlay.step === "model") {
+      if (token === "m") dispatch({ type: "settings-op", op: "cycle-model" });
+      else if (token === "enter") dispatch({ type: "setup-step", step: "credentials" });
+    } else if (overlay.step === "credentials") {
+      if (token === "k") dispatch({ type: "settings-edit", field: "api-key" });
+      else if (token === "u") dispatch({ type: "settings-edit", field: "base-url" });
+      else if (token === "enter") dispatch({ type: "setup-step", step: "validate" });
+    } else {
+      if (token === "t") dispatch({ type: "setup-validate", real: true });
+      else if (token === "enter") dispatch({ type: "close-overlay" });
     }
     return;
   }
@@ -237,7 +275,7 @@ export function onKey(model: AppModel, event: KeyEvent, ctx: KeyContext<Msg>): v
     return;
   }
   if (model.overlay) {
-    handleOverlayKey(model, event, token, dispatch);
+    handleOverlayKey(model, event, token, ctx);
     return;
   }
   if (model.searching) {
@@ -255,6 +293,12 @@ export function onKey(model: AppModel, event: KeyEvent, ctx: KeyContext<Msg>): v
       dispatch({ type: "search-char", value: event.text });
     } else if (event.type === "char" && !event.ctrl && !event.alt) {
       dispatch({ type: "search-char", value: event.value });
+    }
+    return;
+  }
+  if (model.route.screen === "library" && token === "escape") {
+    if (model.query) {
+      dispatch({ type: "end-search" });
     }
     return;
   }
@@ -282,7 +326,11 @@ export function onKey(model: AppModel, event: KeyEvent, ctx: KeyContext<Msg>): v
   }
   switch (resolveAction(model.route.screen, token)) {
     case "quit":
-      quit();
+      if (shouldConfirmQuit(model)) {
+        dispatch({ type: "open-overlay", overlay: { kind: "confirm", message: "번역 작업이 진행 중입니다. 종료하면 취소됩니다. 종료할까요?", action: "quit" } });
+      } else {
+        quit();
+      }
       return;
     case "move-up":
       dispatch({ type: "move", delta: -1 });
@@ -325,8 +373,14 @@ export async function runUiV2(options: UiV2Options): Promise<void> {
   setTheme(createTheme(detectColorLevel(output), detectUnicode(output)));
   const projectRoot = resolveProjectRoot(options.config, options.projectRoot);
   const library = await loadBookshelfModel(projectRoot);
+  const hasApiKey = Boolean(process.env.OPENAI_API_KEY) || Boolean(loadOpenAICompatibleApiKey(options.configDir));
+  const firstRun = !(await pathExists(getConfigPath(options.configDir)));
+  const baseModel = initModel(options.config, library, hasApiKey);
+  const init: AppModel = firstRun
+    ? { ...baseModel, overlay: { kind: "setup", step: "engine", validation: { state: "idle", message: "" } } }
+    : baseModel;
   const terminal = createTerminal(input, output);
   const runEffect = createEffectRunner({ config: options.config, configDir: options.configDir, projectRoot });
 
-  await runProgram<AppModel, Msg, Effect>({ init: initModel(options.config, library), update, view, onKey, runEffect }, { terminal });
+  await runProgram<AppModel, Msg, Effect>({ init, update, view, onKey, runEffect }, { terminal });
 }

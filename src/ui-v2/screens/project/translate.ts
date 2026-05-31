@@ -18,7 +18,7 @@ export function renderTranslate(project: ProjectUiModel, job: Job | null, width:
   const statusLine = job
     ? `${jobStatusLabel(job.status)}  ${progressLine(jobPercent(job), 14)}  완료 ${job.completed}/${job.queued}  실패 ${job.failed}`
     : `완료 ${counts.completed}/${total}  대기 ${counts.pending}  실행 ${counts.running}  실패 ${counts.failed}`;
-  const control = box("번역 상태", [statusLine, "[t]이어가기 [y]실패 재시도 [p]일시정지 [s]건너뛰고 내보내기"], width);
+  const control = box("번역 상태", [statusLine, "[t]이어가기 [y]실패 재시도 [p]일시정지 [x]취소 [s]건너뛰고 내보내기"], width);
   const active = box("진행 중", project.studioQueue.active.length > 0 ? project.studioQueue.active.map(queueLine) : ["진행 중인 화가 없습니다."], width);
   const failed = box(
     "실패한 화",

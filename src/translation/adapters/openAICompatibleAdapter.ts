@@ -34,7 +34,7 @@ export class OpenAICompatibleAdapter implements TranslatorAdapter {
     if (!this.options.apiKey) {
       return {
         available: false,
-        message: "OPENAI_API_KEY is not set."
+        message: "OPENAI_API_KEY가 설정되지 않았습니다."
       };
     }
     const baseUrlError = validateHttpsBaseUrl(this.options.baseUrl);
@@ -47,12 +47,12 @@ export class OpenAICompatibleAdapter implements TranslatorAdapter {
     if (!this.options.model) {
       return {
         available: false,
-        message: "OpenAI-compatible model is not configured."
+        message: "OpenAI 호환 모델이 설정되지 않았습니다."
       };
     }
     return {
       available: true,
-      message: "OpenAI-compatible backend has required local configuration."
+      message: "OpenAI 호환 백엔드의 로컬 설정이 갖춰졌습니다."
     };
   }
 
@@ -66,7 +66,7 @@ export class OpenAICompatibleAdapter implements TranslatorAdapter {
     const json = await this.postChatCompletion(input, model);
     const content = json.choices?.[0]?.message?.content?.trim();
     if (!content) {
-      throw new Error("OpenAI-compatible response did not contain translated content.");
+      throw new Error("OpenAI 호환 응답에 번역 결과가 없습니다.");
     }
     const parsed = parseTranslationResponse(content, input.episode.title);
 
@@ -96,7 +96,7 @@ export class OpenAICompatibleAdapter implements TranslatorAdapter {
           return (await response.json()) as ChatCompletionResponse;
         }
         const text = await response.text();
-        const error = new Error(`OpenAI-compatible request failed with ${response.status}: ${text.slice(0, 500)}`);
+        const error = new Error(`OpenAI 호환 요청이 실패했습니다 (${response.status}): ${text.slice(0, 500)}`);
         lastError = error;
         if (!isRetryableStatus(response.status) || attempt === maxRetries) {
           throw error;
@@ -113,7 +113,7 @@ export class OpenAICompatibleAdapter implements TranslatorAdapter {
       await sleep(retryDelayMs * (attempt + 1), input.signal);
     }
 
-    throw lastError ?? new Error("OpenAI-compatible request failed.");
+    throw lastError ?? new Error("OpenAI 호환 요청이 실패했습니다.");
   }
 }
 
@@ -203,7 +203,7 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 function abortError(): Error {
-  const error = new Error("OpenAI-compatible translation was cancelled.");
+  const error = new Error("OpenAI 호환 번역이 취소되었습니다.");
   error.name = "AbortError";
   return error;
 }
@@ -232,10 +232,10 @@ function validateHttpsBaseUrl(value: string): string | null {
   try {
     url = new URL(value);
   } catch {
-    return "OpenAI-compatible base URL is not a valid URL.";
+    return "OpenAI 호환 base URL이 올바른 URL이 아닙니다.";
   }
   if (url.protocol !== "https:") {
-    return "OpenAI-compatible base URL must use https to protect bearer tokens.";
+    return "OpenAI 호환 base URL은 bearer 토큰 보호를 위해 https를 사용해야 합니다.";
   }
   return null;
 }

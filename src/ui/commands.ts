@@ -5,6 +5,7 @@ export const paletteCommands: PaletteCommand[] = [
   { id: "import-source", label: "새 작품 가져오기", hint: "원문 가져오기", requiresProject: false },
   { id: "search-projects", label: "프로젝트 검색", hint: "책장 검색", requiresProject: false },
   { id: "open-settings", label: "번역 레시피와 설정", hint: "기본 설정", requiresProject: false },
+  { id: "open-setup", label: "번역 엔진 설정 마법사", hint: "엔진 모델 인증 설정", requiresProject: false },
   { id: "open-help", label: "도움말", hint: "키 안내", requiresProject: false },
   { id: "open-studio", label: "작업실 열기", hint: "현재 프로젝트", requiresProject: true },
   { id: "continue-translation", label: "멈춘 작업 이어가기", hint: "대기 화 번역", requiresProject: true },

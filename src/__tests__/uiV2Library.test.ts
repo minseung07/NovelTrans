@@ -55,6 +55,12 @@ test("keyToken and resolveAction map events to actions", () => {
   assert.equal(resolveAction("project", keyToken({ type: "key", name: "escape" })), "back");
 });
 
+test("library Esc no longer quits; q and Ctrl+C still do", () => {
+  assert.equal(resolveAction("library", keyToken({ type: "key", name: "escape" })), null);
+  assert.equal(resolveAction("library", keyToken({ type: "char", value: "q" })), "quit");
+  assert.equal(resolveAction("library", keyToken({ type: "char", value: "C", ctrl: true })), "quit");
+});
+
 test("renderLibrary shows hero, project list, and problem panel", () => {
   const lines = renderLibrary(model(), 74, 24).join("\n");
   assert.ok(lines.includes("이어하기"));

@@ -44,6 +44,7 @@ type InputState =
 export type ConfirmAction =
   | "skip-export"
   | "retry-failed"
+  | "quit"
   | "export-all"
   | "export-configured"
   | "source-reimport"
@@ -55,10 +56,19 @@ export type ConfirmAction =
   | "review-retranslate-all"
   | "review-retranslate-same-type";
 
+export type SetupStep = "engine" | "model" | "credentials" | "validate";
+
+export interface SetupValidation {
+  state: "idle" | "checking" | "ok" | "fail";
+  message: string;
+}
+
 export type Overlay =
   | { kind: "help" }
   | { kind: "settings" }
   | { kind: "palette"; query: string; selected: number }
+  | { kind: "notice"; message: string; level: Severity }
+  | { kind: "setup"; step: SetupStep; validation: SetupValidation }
   | { kind: "confirm"; message: string; action: ConfirmAction };
 
 export interface AppModel {
@@ -81,9 +91,11 @@ export interface AppModel {
   message: AppMessage | null;
   tick: number;
   dryRunAcknowledged: boolean;
+  hasApiKey: boolean;
+  libraryLoading: boolean;
 }
 
-export function initModel(config: NovelTransConfig, library: BookshelfModel): AppModel {
+export function initModel(config: NovelTransConfig, library: BookshelfModel, hasApiKey = false): AppModel {
   return {
     config,
     library,
@@ -103,6 +115,8 @@ export function initModel(config: NovelTransConfig, library: BookshelfModel): Ap
     overlay: null,
     message: null,
     tick: 0,
-    dryRunAcknowledged: false
+    dryRunAcknowledged: false,
+    hasApiKey,
+    libraryLoading: false
   };
 }

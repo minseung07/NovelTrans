@@ -18,14 +18,14 @@ export class DryRunAdapter implements TranslatorAdapter {
   async checkAvailability(): Promise<AdapterStatus> {
     return {
       available: true,
-      message: "Dry-run backend is always available."
+      message: "dry-run 백엔드는 항상 사용할 수 있습니다."
     };
   }
 
   async translateEpisode(input: TranslationInput): Promise<TranslationResult> {
     input.signal?.throwIfAborted();
     if (this.failEpisodeIds.has(input.episode.id)) {
-      throw new Error(`Dry-run requested failure for ${input.episode.id}.`);
+      throw new Error(`dry-run에서 ${input.episode.id} 화의 실패를 요청했습니다.`);
     }
 
     const sourceParagraphs = paragraphs(input.episode.body);

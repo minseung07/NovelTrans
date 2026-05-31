@@ -7,6 +7,7 @@ import { buildGlossaryQueue, suggestedGlossaryTarget } from "../data/glossary.js
 import { filterPaletteCommands } from "../data/palette.js";
 import { isWebImportSource, looksLikeTextPath, parseWebImportRequest } from "../../ui/actions/importActions.js";
 import type { BookshelfProject, GlossaryQueueFilter } from "../../ui/types.js";
+import type { NovelTransConfig } from "../../domain/config.js";
 import { clamp } from "../components/geometry.js";
 import type { AppModel, ConfirmAction, Job } from "./model.js";
 import type { Msg } from "./msg.js";
@@ -14,6 +15,17 @@ import type { Effect } from "./effects.js";
 
 export function currentList(model: AppModel): BookshelfProject[] {
   return filterProjects(model.library.allProjects, model.query);
+}
+
+export function shouldConfirmQuit(model: AppModel): boolean {
+  return Boolean(model.job && (model.job.status === "running" || model.job.status === "paused"));
+}
+
+export function needsSetup(config: NovelTransConfig, hasApiKey: boolean): boolean {
+  if (config.defaultBackend === "openai-compatible") {
+    return !hasApiKey;
+  }
+  return config.defaultBackend === "dry-run";
 }
 
 function jobFromSnapshot(job: Job | null, snapshot: { status: Job["status"]; queued: number; completed: number; failed: number }): Job | null {
@@ -105,6 +117,8 @@ function paletteMapping(model: AppModel, id: string): PaletteMapping {
       return { type: "open-overlay", overlay: { kind: "settings" } };
     case "open-help":
       return { type: "open-overlay", overlay: { kind: "help" } };
+    case "open-setup":
+      return { type: "setup-open" };
     case "open-studio":
       return { type: "go-stage", stage: "overview" };
     case "continue-translation":
@@ -184,6 +198,9 @@ function runConfirm(model: AppModel): [AppModel, Effect[]] {
   }
   const { action } = model.overlay;
   const cleared = { ...model, overlay: null };
+  if (action === "quit") {
+    return [cleared, []];
+  }
   if (action === "web-import") {
     const job: Job = { kind: "web-import", projectDir: "", status: "running", queued: 0, completed: 0, failed: 0 };
     return [{ ...cleared, job }, [{ kind: "web-import-run" }]];
@@ -261,6 +278,9 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
       if (model.job && (model.job.status === "running" || model.job.status === "paused")) {
         return [{ ...model, message: { text: "이미 번역이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
       }
+      if (model.config.defaultBackend === "openai-compatible" && !model.hasApiKey) {
+        return [{ ...model, overlay: { kind: "setup", step: "credentials", validation: { state: "idle", message: "" } } }, []];
+      }
       if (model.config.defaultBackend === "dry-run" && !model.dryRunAcknowledged) {
         return [{ ...model, overlay: { kind: "confirm", message: "dry-run 백엔드는 실제 번역이 아니라 자리표시자 텍스트를 만듭니다. 계속할까요? (설정에서 엔진을 바꿀 수 있습니다)", action: msg.mode === "retry-failed" ? "dry-run-retry" : "dry-run-resume" } }, []];
       }
@@ -270,6 +290,10 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
     }
     case "translate-pause":
       return model.job ? [model, [{ kind: model.job.status === "paused" ? "resume-job" : "pause-job" }]] : [model, []];
+    case "translate-cancel":
+      return model.job && (model.job.status === "running" || model.job.status === "paused")
+        ? [{ ...model, job: { ...model.job, status: "cancelled" } }, [{ kind: "cancel-job" }]]
+        : [model, []];
     case "export-toggle":
       return model.route.screen === "project" ? [model, [{ kind: "export-toggle", projectDir: model.route.projectDir, what: msg.what }]] : [model, []];
     case "export-generate":
@@ -336,7 +360,7 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
       if (model.input.kind === "api-key") {
         const apiKey = model.input.value.trim();
         return apiKey
-          ? [{ ...model, input: null }, [{ kind: "save-api-key", apiKey }]]
+          ? [{ ...model, input: null, hasApiKey: true }, [{ kind: "save-api-key", apiKey }]]
           : [{ ...model, input: null, message: { text: "API 키가 비어 있습니다.", level: "warning" } }, [{ kind: "dismiss" }]];
       }
       if (model.input.kind === "base-url") {
@@ -352,6 +376,25 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
       return [{ ...model, overlay: msg.overlay }, []];
     case "close-overlay":
       return [{ ...model, overlay: null }, []];
+    case "setup-open":
+      return [{ ...model, overlay: { kind: "setup", step: "engine", validation: { state: "idle", message: "" } } }, []];
+    case "setup-step": {
+      if (model.overlay?.kind !== "setup") {
+        return [model, []];
+      }
+      if (msg.step === "validate") {
+        return [{ ...model, overlay: { ...model.overlay, step: "validate", validation: { state: "checking", message: "확인 중…" } } }, [{ kind: "setup-validate", real: false }]];
+      }
+      return [{ ...model, overlay: { ...model.overlay, step: msg.step } }, []];
+    }
+    case "setup-validate":
+      return model.overlay?.kind === "setup"
+        ? [{ ...model, overlay: { ...model.overlay, validation: { state: "checking", message: "확인 중…" } } }, [{ kind: "setup-validate", real: msg.real }]]
+        : [model, []];
+    case "setup-validated":
+      return model.overlay?.kind === "setup"
+        ? [{ ...model, overlay: { ...model.overlay, validation: { state: msg.ok ? "ok" : "fail", message: msg.message } } }, []]
+        : [model, []];
     case "palette-input":
       return [{ ...model, overlay: model.overlay?.kind === "palette" ? { ...model.overlay, query: model.overlay.query + msg.value, selected: 0 } : model.overlay }, []];
     case "palette-backspace":
@@ -387,13 +430,17 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
     case "project-loaded":
       return [{ ...model, project: msg.model, projectLoading: false }, []];
     case "project-load-failed":
-      return [{ ...model, projectLoading: false, message: { text: msg.message, level: "critical" } }, [{ kind: "dismiss" }]];
+      return [{ ...model, projectLoading: false, overlay: { kind: "notice", message: msg.message, level: "critical" } }, []];
     case "library-loaded":
-      return [{ ...model, library: msg.model }, []];
+      return [{ ...model, library: msg.model, libraryLoading: false }, []];
     case "config-updated":
       return [{ ...model, config: msg.config }, []];
-    case "action-done":
-      return [{ ...model, message: { text: msg.message, level: msg.level ?? "info" } }, [{ kind: "dismiss" }]];
+    case "action-done": {
+      const level = msg.level ?? "info";
+      return level === "critical"
+        ? [{ ...model, overlay: { kind: "notice", message: msg.message, level } }, []]
+        : [{ ...model, message: { text: msg.message, level } }, [{ kind: "dismiss" }]];
+    }
     case "clear-message":
       return [{ ...model, message: null }, []];
     case "job-clear":
@@ -409,11 +456,11 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
     case "job-done": {
       const job = jobFromSnapshot(model.job, msg.snapshot);
       const effects: Effect[] = model.route.screen === "project" ? [{ kind: "load-project", projectDir: model.route.projectDir }, { kind: "load-library" }] : [{ kind: "load-library" }];
-      return [{ ...model, job }, effects];
+      return [{ ...model, job, libraryLoading: true }, effects];
     }
     case "job-failed": {
-      const effects: Effect[] = model.route.screen === "project" ? [{ kind: "load-project", projectDir: model.route.projectDir }, { kind: "load-library" }, { kind: "dismiss" }] : [{ kind: "load-library" }, { kind: "dismiss" }];
-      return [{ ...model, job: model.job ? { ...model.job, status: "failed" } : model.job, message: { text: msg.message, level: "critical" } }, effects];
+      const effects: Effect[] = model.route.screen === "project" ? [{ kind: "load-project", projectDir: model.route.projectDir }, { kind: "load-library" }] : [{ kind: "load-library" }];
+      return [{ ...model, job: model.job ? { ...model.job, status: "failed" } : model.job, overlay: { kind: "notice", message: msg.message, level: "critical" } }, effects];
     }
     case "start-search":
       return [{ ...model, searching: true }, []];

@@ -32,5 +32,5 @@ export function createTranslatorAdapter(backend: string, config: NovelTransConfi
       sandbox: config.codexCli.sandbox
     });
   }
-  throw new Error(`Unknown translation backend: ${backend}`);
+  throw new Error(`알 수 없는 번역 백엔드입니다: ${backend}`);
 }

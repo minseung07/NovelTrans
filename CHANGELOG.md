@@ -2,6 +2,27 @@
 
 All notable changes to NovelTrans will be documented in this file.
 
+## [2.1.3] - 2026-05-31
+
+### Added
+
+- Added a v2 first-run setup wizard for selecting the translation engine, model, credentials, and validation checks.
+- Added v2 translation cancellation and a quit confirmation when translation is running or paused.
+- Added CLI dry-run warnings so placeholder translation output is explicit before a job starts.
+- Added grouped Korean CLI help with command descriptions, aliases, examples, and global options.
+
+### Changed
+
+- Localized CLI errors and translator availability messages into Korean.
+- Kept library `Esc` navigation from quitting the app; `q` and `Ctrl+C` remain quit shortcuts.
+- Made critical v2 failures open persistent notice overlays instead of transient status messages.
+
+### Fixed
+
+- Prevented OpenAI-compatible v2 translation from starting without an API key by opening credential setup.
+- Refreshed library loading state after completed or failed background jobs.
+- Preserved npm package executable metadata with the `dist/index.js` bin target.
+
 ## [2.1.2] - 2026-05-30
 
 ### Added

@@ -138,14 +138,23 @@ test("export toggle and generate emit effects", () => {
 
 test("job failure exposes the backend error and refreshes project and library data", () => {
   const running: AppModel = { ...projectModel("translate"), job: { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } };
-  const [next, effects] = update(running, { type: "job-failed", message: "OPENAI_API_KEY is not set." });
-  assert.equal(next.message?.text, "OPENAI_API_KEY is not set.");
-  assert.equal(next.message?.level, "critical");
+  const [next, effects] = update(running, { type: "job-failed", message: "OPENAI_API_KEY가 설정되지 않았습니다." });
+  assert.equal(next.overlay?.kind === "notice" && next.overlay.message, "OPENAI_API_KEY가 설정되지 않았습니다.");
+  assert.equal(next.overlay?.kind === "notice" && next.overlay.level, "critical");
   assert.equal(next.job?.status, "failed");
   assert.deepEqual(
     effects.map((effect) => effect.kind),
-    ["load-project", "load-library", "dismiss"]
+    ["load-project", "load-library"]
   );
+});
+
+test("critical action-done opens a persistent notice; non-critical stays transient", () => {
+  const [crit] = update(baseModel(), { type: "action-done", message: "실패", level: "critical" });
+  assert.equal(crit.overlay?.kind, "notice");
+  const [info, infoEffects] = update(baseModel(), { type: "action-done", message: "완료", level: "success" });
+  assert.equal(info.overlay, null);
+  assert.equal(info.message?.text, "완료");
+  assert.deepEqual(infoEffects.map((effect) => effect.kind), ["dismiss"]);
 });
 
 test("settings op emits a config effect; config-updated applies", () => {
@@ -160,6 +169,14 @@ test("translate pause toggles between pause and resume effects by job status", (
   assert.equal(update(running, { type: "translate-pause" })[1][0]!.kind, "pause-job");
   const paused: AppModel = { ...running, job: { ...running.job!, status: "paused" } };
   assert.equal(update(paused, { type: "translate-pause" })[1][0]!.kind, "resume-job");
+});
+
+test("translate cancel stops an active job and emits cancel-job", () => {
+  const running: AppModel = { ...projectModel("translate"), job: { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } };
+  const [next, effects] = update(running, { type: "translate-cancel" });
+  assert.equal(next.job?.status, "cancelled");
+  assert.equal(effects[0]?.kind, "cancel-job");
+  assert.deepEqual(update(projectModel("translate"), { type: "translate-cancel" })[1], []);
 });
 
 test("translate/export/overlay views render", () => {

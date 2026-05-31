@@ -3,7 +3,7 @@
 import type { NovelTransConfig } from "../../domain/config.js";
 import type { BookshelfModel, GlossaryQueueFilter, ProjectUiModel } from "../../ui/types.js";
 import type { TranslationSessionSnapshot } from "../../engine/translationSession.js";
-import type { Overlay, Stage } from "./model.js";
+import type { Overlay, SetupStep, Stage } from "./model.js";
 import type { Severity } from "../theme/theme.js";
 
 type GlossaryOp = "confirm" | "lock" | "forbid" | "discard";
@@ -18,6 +18,7 @@ export type Msg =
   | { type: "go-stage"; stage: Stage }
   | { type: "start-translate"; mode: "resume" | "retry-failed" }
   | { type: "translate-pause" }
+  | { type: "translate-cancel" }
   | { type: "export-toggle"; what: ExportToggle }
   | { type: "export-generate" }
   | { type: "settings-op"; op: SettingsOp }
@@ -41,6 +42,10 @@ export type Msg =
   | { type: "input-submit" }
   | { type: "open-overlay"; overlay: Overlay }
   | { type: "close-overlay" }
+  | { type: "setup-open" }
+  | { type: "setup-step"; step: SetupStep }
+  | { type: "setup-validate"; real: boolean }
+  | { type: "setup-validated"; ok: boolean; message: string }
   | { type: "palette-input"; value: string }
   | { type: "palette-backspace" }
   | { type: "palette-move"; delta: number }

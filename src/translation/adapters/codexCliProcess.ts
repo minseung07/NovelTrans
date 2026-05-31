@@ -25,7 +25,7 @@ export async function runCodexCommand(command: string, args: string[], timeoutMs
       settled = true;
       child.kill("SIGTERM");
       cleanup();
-      reject(new Error(`codex CLI timed out after ${timeoutMs}ms.`));
+      reject(new Error(`codex CLI가 ${timeoutMs}ms 후 시간 초과되었습니다.`));
     }, timeoutMs);
     const abort = () => {
       if (settled) {
@@ -34,7 +34,9 @@ export async function runCodexCommand(command: string, args: string[], timeoutMs
       settled = true;
       child.kill("SIGTERM");
       cleanup();
-      reject(new Error("codex CLI translation was cancelled."));
+      const error = new Error("codex CLI 번역이 취소되었습니다.");
+      error.name = "AbortError";
+      reject(error);
     };
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) {

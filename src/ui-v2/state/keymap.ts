@@ -24,7 +24,7 @@ export const keyBindings: Binding[] = [
   { action: "import", context: "library", keys: ["n"], hint: "[N] 가져오기" },
   { action: "palette", context: "library", keys: [":", "ctrl+k"], hint: "[:] 명령" },
   { action: "help", context: "library", keys: ["?"], hint: "[?] 도움말" },
-  { action: "quit", context: "library", keys: ["q", "escape", "ctrl+c"], hint: "[Q] 종료" },
+  { action: "quit", context: "library", keys: ["q", "ctrl+c"], hint: "[Q] 종료" },
   { action: "back", context: "project", keys: ["escape", "b"], hint: "[Esc] 뒤로" },
   { action: "translate", context: "project", keys: ["t"], hint: "[T] 번역" },
   { action: "palette", context: "project", keys: [":", "ctrl+k"], hint: "[:] 명령" },

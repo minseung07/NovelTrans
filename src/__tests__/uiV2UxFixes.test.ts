@@ -6,6 +6,7 @@ import type { Job } from "../ui-v2/state/model.js";
 import { jobSegment } from "../ui-v2/screens/project/overview.js";
 import { spinnerFrame } from "../ui-v2/components/progress.js";
 import { update } from "../ui-v2/state/update.js";
+import { shouldConfirmQuit } from "../ui-v2/state/update.js";
 import { view, onKey } from "../ui-v2/app.js";
 import type { Msg } from "../ui-v2/state/msg.js";
 import { severityBadge } from "../ui-v2/components/badge.js";
@@ -30,7 +31,34 @@ test("F5: action-done defaults to info, errors are critical, successes are succe
 
   const running: AppModel = { ...baseModel(), route: { screen: "project", projectDir: "/p/a", stage: "translate" }, job: { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } };
   const [failed] = update(running, { type: "job-failed", message: "실패" });
-  assert.equal(failed.message?.level, "critical");
+  assert.equal(failed.overlay?.kind === "notice" && failed.overlay.level, "critical");
+});
+
+test("Q1: shouldConfirmQuit is true only when a job is running or paused", () => {
+  assert.equal(shouldConfirmQuit(baseModel()), false);
+  const running: AppModel = { ...baseModel(), job: { kind: "translate", projectDir: "/p", status: "running", queued: 1, completed: 0, failed: 0 } };
+  assert.equal(shouldConfirmQuit(running), true);
+  assert.equal(shouldConfirmQuit({ ...running, job: { ...running.job!, status: "paused" } }), true);
+  assert.equal(shouldConfirmQuit({ ...running, job: { ...running.job!, status: "completed" } }), false);
+});
+
+test("Q2: quitting while a job runs confirms; idle quits immediately; confirming exits", () => {
+  const job: Job = { kind: "translate", projectDir: "/p", status: "running", queued: 1, completed: 0, failed: 0 };
+  const running: AppModel = { ...baseModel(), job };
+  const msgs: Msg[] = [];
+  let quit = false;
+  onKey(running, { type: "char", value: "q" }, { dispatch: (m) => msgs.push(m), quit: () => { quit = true; } });
+  assert.equal(quit, false);
+  assert.equal(msgs[0]?.type === "open-overlay" && msgs[0].overlay.kind === "confirm" && msgs[0].overlay.action, "quit");
+
+  let idleQuit = false;
+  onKey(baseModel(), { type: "char", value: "q" }, { dispatch: () => {}, quit: () => { idleQuit = true; } });
+  assert.equal(idleQuit, true);
+
+  const confirming: AppModel = { ...running, overlay: { kind: "confirm", message: "종료?", action: "quit" } };
+  let confirmedQuit = false;
+  onKey(confirming, { type: "char", value: "y" }, { dispatch: () => {}, quit: () => { confirmedQuit = true; } });
+  assert.equal(confirmedQuit, true);
 });
 
 test("F8: starting translate while a job runs gives feedback instead of a silent no-op", () => {

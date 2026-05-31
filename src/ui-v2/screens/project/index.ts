@@ -84,10 +84,7 @@ function stageDetail(model: AppModel, stage: Stage, project: ProjectUiModel, job
   if (stage === "translate") {
     return renderTranslate(project, job, width);
   }
-  if (stage === "export") {
-    return renderExport(project, width);
-  }
-  return box(STAGE_LABELS[stage], ["이 단계는 다음 Phase에서 구현됩니다.", "[1] 개요   [Esc] 책장"], width);
+  return renderExport(project, width);
 }
 
 export function renderProject(model: AppModel, width: number, _rows: number): string[] {
