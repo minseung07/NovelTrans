@@ -1,8 +1,16 @@
 {
   "name": "noveltrans",
-  "version": "2.1.3",
+  "version": "2.1.4",
   "description": "TypeScript-based project translator for long-form novel text.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/minseung07/NovelTrans.git"
+  },
+  "bugs": {
+    "url": "https://github.com/minseung07/NovelTrans/issues"
+  },
+  "homepage": "https://github.com/minseung07/NovelTrans#readme",
   "bin": {
     "noveltrans": "dist/index.js"
   },
@@ -30,6 +38,9 @@
   ],
   "author": "minseung07",
   "license": "MIT",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
   "devDependencies": {
     "@types/node": "^22.15.0",
     "typescript": "^5.8.3"

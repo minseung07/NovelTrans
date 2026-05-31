@@ -2,6 +2,19 @@
 
 All notable changes to NovelTrans will be documented in this file.
 
+## [2.1.4] - 2026-05-31
+
+### Added
+
+- Added npm Trusted Publishing release automation through GitHub Actions OIDC.
+- Added npm package repository, issue tracker, homepage, and registry publish metadata.
+- Documented npm Trusted Publishing setup and release tag requirements.
+
+### Changed
+
+- Switched release publishing from long-lived `NPM_TOKEN` authentication to trusted publishing.
+- Updated CI and release workflows to run on Node.js `22.x` with current GitHub Actions.
+
 ## [2.1.3] - 2026-05-31
 
 ### Added
