@@ -20,20 +20,19 @@ type TranslateEpisodePartsOptions = {
 };
 
 export async function translateEpisodeParts(options: TranslateEpisodePartsOptions): Promise<TranslationResult> {
-  const glossaryContext = buildGlossaryContext(options.glossary.entries, options.glossaryStrictness);
   const styleGuide = styleGuideFor(options.translationStyle ?? "balanced-webnovel");
-  const baseInput = {
+  const baseInput = (sourceText: string) => ({
     glossaryEntries: options.glossary.entries,
-    glossaryContext,
+    glossaryContext: buildGlossaryContext(options.glossary.entries, options.glossaryStrictness, sourceText),
     styleGuide,
     model: options.model,
     signal: options.signal
-  };
+  });
 
   const foreword = options.episode.foreword?.trim();
   const forewordResult = foreword
     ? await options.adapter.translateEpisode({
-        ...baseInput,
+        ...baseInput(foreword),
         episode: buildSegmentEpisode(options.episode, "foreword", foreword)
       })
     : null;
@@ -45,7 +44,7 @@ export async function translateEpisodeParts(options: TranslateEpisodePartsOption
     const episode = bodyChunks.length === 1 ? options.episode : buildChunkEpisode(options.episode, chunk, index + 1, bodyChunks.length);
     bodyResults.push(
       await options.adapter.translateEpisode({
-        ...baseInput,
+        ...baseInput(episode.sourceText),
         episode
       })
     );
@@ -56,7 +55,7 @@ export async function translateEpisodeParts(options: TranslateEpisodePartsOption
   const afterword = options.episode.afterword?.trim();
   const afterwordResult = afterword
     ? await options.adapter.translateEpisode({
-        ...baseInput,
+        ...baseInput(afterword),
         episode: buildSegmentEpisode(options.episode, "afterword", afterword)
       })
     : null;

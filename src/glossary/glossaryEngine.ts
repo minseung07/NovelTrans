@@ -277,19 +277,54 @@ function confirmedTargetCandidates(entry: GlossaryEntry, target: string): Glossa
   ];
 }
 
-export function buildGlossaryContext(entries: GlossaryEntry[], strictness: "low" | "medium" | "high" | "strict"): string {
+export function buildGlossaryContext(entries: GlossaryEntry[], strictness: "low" | "medium" | "high" | "strict", sourceText = ""): string {
   const usableEntries = entries.filter((entry) => entry.target && (entry.status === "confirmed" || entry.status === "locked"));
   if (usableEntries.length === 0) {
     return "";
   }
   const limit = strictness === "low" ? 20 : strictness === "medium" ? 50 : 100;
-  return usableEntries
-    .slice(0, limit)
+  const selectedEntries = sourceText.trim() ? prioritizedGlossaryEntries(usableEntries, sourceText).slice(0, limit) : usableEntries.slice(0, limit);
+  return selectedEntries
     .map((entry) => {
       const lockHint = entry.locked || strictness === "strict" ? "locked" : entry.status;
       return `- ${entry.source} => ${entry.target} (${lockHint})`;
     })
     .join("\n");
+}
+
+function prioritizedGlossaryEntries(entries: GlossaryEntry[], sourceText: string): GlossaryEntry[] {
+  return entries
+    .map((entry, index) => ({ entry, index, relevance: glossarySourceRelevance(entry, sourceText) }))
+    .sort((left, right) => {
+      if (right.relevance !== left.relevance) {
+        return right.relevance - left.relevance;
+      }
+      if (Number(right.entry.locked) !== Number(left.entry.locked)) {
+        return Number(right.entry.locked) - Number(left.entry.locked);
+      }
+      if (statusRank(right.entry) !== statusRank(left.entry)) {
+        return statusRank(right.entry) - statusRank(left.entry);
+      }
+      if (right.entry.occurrenceCount !== left.entry.occurrenceCount) {
+        return right.entry.occurrenceCount - left.entry.occurrenceCount;
+      }
+      if (right.entry.confidence !== left.entry.confidence) {
+        return right.entry.confidence - left.entry.confidence;
+      }
+      return left.index - right.index;
+    })
+    .map((item) => item.entry);
+}
+
+function glossarySourceRelevance(entry: GlossaryEntry, sourceText: string): number {
+  if (entry.source && sourceText.includes(entry.source)) {
+    return 2;
+  }
+  return entry.aliases.some((alias) => alias && sourceText.includes(alias)) ? 1 : 0;
+}
+
+function statusRank(entry: GlossaryEntry): number {
+  return entry.status === "locked" ? 2 : entry.status === "confirmed" ? 1 : 0;
 }
 
 function collectCandidates(episodes: Episode[]): Map<string, CandidateAccumulator> {

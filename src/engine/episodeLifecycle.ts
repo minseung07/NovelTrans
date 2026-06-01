@@ -78,17 +78,21 @@ export async function finishMetadataFromEpisodeStates(
   cancelledStatus: ProjectMetadata["status"] = "ready"
 ): Promise<void> {
   const states = stateStore.listEpisodeStates();
-  metadata.status = states.some((state) => state.status === "failed")
-    ? "completed_with_issues"
-    : states.every((state) => state.status === "completed" || state.status === "skipped")
-      ? "completed"
-      : cancelledStatus;
+  if (states.some((state) => state.status === "running")) {
+    metadata.status = "translating";
+  } else if (states.some((state) => state.status === "failed")) {
+    metadata.status = "completed_with_issues";
+  } else if (states.every((state) => state.status === "completed" || state.status === "skipped")) {
+    metadata.status = "completed";
+  } else {
+    metadata.status = cancelledStatus;
+  }
   metadata.updatedAt = nowIso();
   await saveProjectMetadata(metadata);
 }
 
 export function isAbortError(error: unknown): boolean {
-  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError" || /cancelled|aborted/i.test(error.message));
+  return error instanceof Error && (error.name === "AbortError" || /cancelled|aborted/i.test(error.message));
 }
 
 async function shouldRefreshGlossaryCandidates(projectDir: string, glossary: GlossaryData): Promise<boolean> {

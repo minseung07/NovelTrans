@@ -4,6 +4,7 @@ import {
   addForbiddenTarget,
   confirmGlossaryTerm,
   addTargetCandidate,
+  buildGlossaryContext,
   createEmptyGlossary,
   deprecateGlossaryTerm,
   detectGlossaryConflicts,
@@ -12,6 +13,7 @@ import {
 import { runQA } from "../qa/qaEngine.js";
 import { buildReviewDeskModel } from "../ui/reviewDeskModel.js";
 import type { Episode } from "../domain/episode.js";
+import type { GlossaryEntry } from "../domain/glossary.js";
 import type { TranslationResult } from "../domain/translation.js";
 
 test("detects glossary target conflicts and locked term QA issues", () => {
@@ -172,6 +174,101 @@ test("QA issues carry paragraph locations for Review Desk detail", () => {
   assert.match(number?.sourceSnippet ?? "", /34/);
 });
 
+test("QA detects missing Japanese numerals after normalization", () => {
+  const episode: Episode = {
+    id: "episode_001",
+    episodeNo: 1,
+    title: "第1話 数字",
+    sourceText: "黒架は第七区で十二人を見た。",
+    body: "黒架は第七区で十二人を見た。",
+    sourceHash: "hash",
+    metadata: {}
+  };
+  const result: TranslationResult = {
+    episodeId: episode.id,
+    titleKo: "제1화",
+    bodyKo: "흑가는 7구에서 사람들을 보았다.",
+    usedGlossaryEntries: [],
+    newGlossaryCandidates: [],
+    qaIssueIds: [],
+    model: "dry-run",
+    backend: "dry-run",
+    createdAt: new Date().toISOString()
+  };
+
+  const issues = runQA(episode, result, createEmptyGlossary());
+  const number = issues.find((issue) => issue.type === "number_mismatch");
+  assert.match(number?.message ?? "", /12/);
+  assert.match(number?.sourceSnippet ?? "", /十二/);
+});
+
+test("QA detects repeated number count changes", () => {
+  const episode: Episode = {
+    id: "episode_001",
+    episodeNo: 1,
+    title: "第1話 重複",
+    sourceText: "鐘が12回、また12回鳴った。",
+    body: "鐘が12回、また12回鳴った。",
+    sourceHash: "hash",
+    metadata: {}
+  };
+  const result: TranslationResult = {
+    episodeId: episode.id,
+    titleKo: "제1화",
+    bodyKo: "종이 12번 울렸다.",
+    usedGlossaryEntries: [],
+    newGlossaryCandidates: [],
+    qaIssueIds: [],
+    model: "dry-run",
+    backend: "dry-run",
+    createdAt: new Date().toISOString()
+  };
+
+  const issues = runQA(episode, result, createEmptyGlossary());
+  const number = issues.find((issue) => issue.type === "number_mismatch");
+  assert.match(number?.message ?? "", /12/);
+  assert.match(number?.sourceSnippet ?? "", /12回、また12回/);
+});
+
+test("glossary context prioritizes entries that appear in the episode source", () => {
+  const entries: GlossaryEntry[] = Array.from({ length: 120 }, (_, index) =>
+    glossaryEntry({
+      id: `glossary_irrelevant_${index}`,
+      source: `用語${String(index).padStart(3, "0")}`,
+      target: `용어${index}`
+    })
+  );
+  entries.push(
+    glossaryEntry({
+      id: "glossary_late_relevant",
+      source: "重要語",
+      target: "중요어",
+      status: "locked",
+      locked: true,
+      aliases: ["大事な言葉"]
+    })
+  );
+
+  const context = buildGlossaryContext(entries, "high", "黒架は重要語を唱えた。");
+  assert.match(context, /重要語 => 중요어/);
+});
+
+test("glossary context treats aliases as episode relevance signals", () => {
+  const context = buildGlossaryContext(
+    [
+      glossaryEntry({
+        id: "glossary_alias",
+        source: "正式名",
+        target: "정식명",
+        aliases: ["別名"]
+      })
+    ],
+    "low",
+    "黒架は別名で呼ばれた。"
+  );
+  assert.match(context, /正式名 => 정식명/);
+});
+
 test("QA covers translated foreword and afterword sections", () => {
   let glossary = createEmptyGlossary();
   glossary = confirmGlossaryTerm(glossary, "聖印", "성인", true);
@@ -240,3 +337,25 @@ test("QA options disable configured checks without muting structural errors", ()
   assert.equal(issues.some((issue) => issue.type === "number_mismatch"), false);
   assert.equal(issues.some((issue) => issue.type === "missing_paragraph"), true);
 });
+
+function glossaryEntry(overrides: Partial<GlossaryEntry> & Pick<GlossaryEntry, "id" | "source" | "target">): GlossaryEntry {
+  const now = new Date().toISOString();
+  return {
+    type: "term",
+    status: "confirmed",
+    aliases: [],
+    forbiddenTargets: [],
+    notes: "",
+    confidence: 0.8,
+    sourceScore: 0.8,
+    targetScore: 0.8,
+    occurrenceCount: 1,
+    firstSeenEpisode: 1,
+    lastSeenEpisode: 1,
+    locked: false,
+    targetCandidates: [],
+    createdAt: now,
+    updatedAt: now,
+    ...overrides
+  };
+}

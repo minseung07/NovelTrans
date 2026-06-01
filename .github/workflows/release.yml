@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*"
   release:
     types:
       - published
@@ -22,7 +25,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -53,7 +56,24 @@ jobs:
         run: |
           node -e 'const fs = require("node:fs"); const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); const tag = process.env.TAG_NAME; const expected = "v" + pkg.version; if (tag !== expected) { console.error("Release tag " + tag + " does not match package version " + pkg.version + "; expected " + expected + "."); process.exit(1); }'
         env:
-          TAG_NAME: ${{ github.event.release.tag_name || inputs.tag }}
+          TAG_NAME: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
 
       - name: Publish package
-        run: npm publish
+        run: npm publish --provenance
+
+      - name: Verify npm provenance
+        run: |
+          node <<'NODE'
+          const { execFileSync } = require("node:child_process");
+          const fs = require("node:fs");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const spec = `${pkg.name}@${pkg.version}`;
+          const raw = execFileSync("npm", ["view", spec, "dist", "--json"], { encoding: "utf8" });
+          const dist = JSON.parse(raw);
+          const serialized = JSON.stringify(dist).toLowerCase();
+          if (!serialized.includes("attestation") && !serialized.includes("provenance")) {
+            console.error(`No npm provenance metadata found for ${spec}.`);
+            process.exit(1);
+          }
+          console.log(`Verified npm provenance metadata for ${spec}.`);
+          NODE

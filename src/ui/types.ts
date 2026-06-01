@@ -66,6 +66,7 @@ export type SourceStatus = {
 };
 
 export type StudioQueueItem = {
+  episodeId?: string;
   episodeNo: number;
   title: string;
   status: string;

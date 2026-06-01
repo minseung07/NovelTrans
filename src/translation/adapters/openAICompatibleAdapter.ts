@@ -68,7 +68,7 @@ export class OpenAICompatibleAdapter implements TranslatorAdapter {
     if (!content) {
       throw new Error("OpenAI 호환 응답에 번역 결과가 없습니다.");
     }
-    const parsed = parseTranslationResponse(content, input.episode.title);
+    const parsed = parseTranslationResponse(content, input.episode.title, { strict: true });
 
     return {
       episodeId: input.episode.id,
@@ -145,12 +145,16 @@ async function fetchWithTimeout(url: string, requestBody: Record<string, unknown
     throw new Error(baseUrlError);
   }
   const controller = new AbortController();
+  let timedOut = false;
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) {
     abort();
   }
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, options.timeoutMs);
   try {
     return await fetch(url, {
       method: "POST",
@@ -161,6 +165,11 @@ async function fetchWithTimeout(url: string, requestBody: Record<string, unknown
       body: JSON.stringify(requestBody),
       signal: controller.signal
     });
+  } catch (error) {
+    if (timedOut && !signal?.aborted) {
+      throw timeoutError(options.timeoutMs);
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abort);
@@ -172,7 +181,7 @@ function isRetryableStatus(status: number): boolean {
 }
 
 function isRetryableError(error: unknown): boolean {
-  if (error instanceof Error && error.name === "AbortError") {
+  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
     return true;
   }
   return error instanceof TypeError;
@@ -205,6 +214,12 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 function abortError(): Error {
   const error = new Error("OpenAI 호환 번역이 취소되었습니다.");
   error.name = "AbortError";
+  return error;
+}
+
+function timeoutError(timeoutMs: number): Error {
+  const error = new Error(`OpenAI 호환 요청이 ${timeoutMs}ms 후 시간 초과되었습니다.`);
+  error.name = "TimeoutError";
   return error;
 }
 

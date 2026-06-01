@@ -1,3 +1,3 @@
 // Command palette data: reuses the existing command list and fuzzy filter.
 
-export { filterPaletteCommands } from "../../ui/commands.js";
+export { filterPaletteCommands, hasProjectOnlyPaletteMatches } from "../../ui/commands.js";

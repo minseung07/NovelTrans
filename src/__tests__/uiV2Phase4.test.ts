@@ -48,6 +48,11 @@ test("palette opens, filters, and runs a mapped command", () => {
   assert.equal(model.overlay?.kind, "help");
 });
 
+test("palette explains project-only matches when no project is open", () => {
+  const lines = renderPalette("glossary", 0, false, 70).join("\n");
+  assert.ok(lines.includes("프로젝트를 연 뒤 사용할 수 있는 명령입니다."));
+});
+
 test("a confirm-required palette command opens a confirm overlay, then runs on yes", () => {
   let model: AppModel = { ...baseModel(), route: { screen: "project", projectDir: "/p/a", stage: "translate" }, project: projectFixture() };
   [model] = update(model, { type: "open-overlay", overlay: { kind: "palette", query: "건너뛰", selected: 0 } });
@@ -195,4 +200,35 @@ test("translate/export/overlay views render", () => {
   assert.ok(renderHelp(70).join("\n").includes("도움말"));
   assert.ok(renderSettings({ ...defaultConfig }, 70).join("\n").includes("백엔드"));
   assert.ok(renderPalette("", 0, true, 70).join("\n").includes("명령 팔레트"));
+});
+
+test("translate controls are state-aware", () => {
+  const idleDone = {
+    ...projectFixture(),
+    overview: {
+      ...projectFixture().overview,
+      counts: { pending: 0, running: 0, completed: 4, failed: 0, skipped: 0 }
+    },
+    failureRecovery: { failedCount: 0, items: [], logPath: "" }
+  } as ProjectUiModel;
+  const done = renderTranslate(idleDone, null, 80).join("\n");
+  assert.ok(done.includes("번역할 대기 화가 없습니다."));
+  assert.equal(done.includes("[p]일시정지"), false);
+  assert.equal(done.includes("[y]실패 재시도"), false);
+
+  const running = renderTranslate(idleDone, { kind: "translate", projectDir: "/p/a", status: "running", queued: 4, completed: 1, failed: 0 }, 80).join("\n");
+  assert.ok(running.includes("[p]일시정지"));
+  assert.ok(running.includes("[x]취소"));
+});
+
+test("QA retranslation appears in the active episode list while running", () => {
+  const project = {
+    ...projectFixture(),
+    studioQueue: { active: [], next: [], failed: [], skipped: [] }
+  } as ProjectUiModel;
+  const running = renderTranslate(project, { kind: "qa-retranslate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0, current: "1화 1화", episodeIds: ["e1"] }, 80).join("\n");
+  assert.ok(running.includes("1. 1화  QA 재번역"));
+  assert.equal(running.includes("진행 중인 화가 없습니다."), false);
+  assert.equal(running.includes("[p]일시정지"), false);
+  assert.ok(running.includes("[x]취소"));
 });

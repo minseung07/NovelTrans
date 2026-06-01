@@ -7,7 +7,7 @@ import { createEffectRunner } from "../ui-v2/state/effects.js";
 import { renderSetup } from "../ui-v2/screens/overlays.js";
 import type { Msg } from "../ui-v2/state/msg.js";
 import { defaultConfig } from "../config/defaultConfig.js";
-import type { BookshelfModel } from "../ui/types.js";
+import type { BookshelfModel, ProjectUiModel } from "../ui/types.js";
 
 setTheme(createTheme(0, false));
 
@@ -15,6 +15,16 @@ const library: BookshelfModel = { projectRoot: "/p", continueProject: null, allP
 
 function model(overrides: Partial<AppModel> = {}): AppModel {
   return { ...initModel({ ...defaultConfig }, library), ...overrides };
+}
+
+function projectModel(backend: string): ProjectUiModel {
+  return {
+    overview: {
+      metadata: {
+        options: { backend }
+      }
+    }
+  } as ProjectUiModel;
 }
 
 test("needsSetup: dry-run always, openai-compatible only without a key, codex assumed configured", () => {
@@ -47,6 +57,26 @@ test("setup-validated records the result; setup-validate(real) re-checks", () =>
 test("start-translate opens guided setup when openai-compatible has no key", () => {
   const base = { ...initModel({ ...defaultConfig, defaultBackend: "openai-compatible" }, library, false), route: { screen: "project" as const, projectDir: "/p/a", stage: "translate" as const } };
   const [next, effects] = update(base, { type: "start-translate", mode: "resume" });
+  assert.equal(next.overlay?.kind === "setup" && next.overlay.step, "credentials");
+  assert.deepEqual(effects, []);
+});
+
+test("start-translate setup checks use the project backend before the global backend", () => {
+  const dryRunProject = {
+    ...initModel({ ...defaultConfig, defaultBackend: "openai-compatible" }, library, false),
+    route: { screen: "project" as const, projectDir: "/p/dry", stage: "translate" as const },
+    project: projectModel("dry-run")
+  };
+  let [next, effects] = update(dryRunProject, { type: "start-translate", mode: "resume" });
+  assert.equal(next.overlay?.kind === "confirm" && next.overlay.action, "dry-run-resume");
+  assert.deepEqual(effects, []);
+
+  const openAIProject = {
+    ...initModel({ ...defaultConfig, defaultBackend: "dry-run" }, library, false),
+    route: { screen: "project" as const, projectDir: "/p/openai", stage: "translate" as const },
+    project: projectModel("openai-compatible")
+  };
+  [next, effects] = update(openAIProject, { type: "start-translate", mode: "resume" });
   assert.equal(next.overlay?.kind === "setup" && next.overlay.step, "credentials");
   assert.deepEqual(effects, []);
 });

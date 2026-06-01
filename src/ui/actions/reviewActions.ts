@@ -1,6 +1,6 @@
 import type { NovelTransConfig } from "../../domain/config.js";
 import type { TranslatorAdapter } from "../../domain/translation.js";
-import { rerunProjectQA, type ProjectQAProgress } from "../../engine/projectWorkflow.js";
+import { rerunProjectQA, type ProjectQAOptions, type ProjectQAProgress } from "../../engine/projectWorkflow.js";
 import { translateSingleEpisode } from "../../engine/singleEpisodeTranslation.js";
 import { translationMarkdownPath } from "../../storage/projectPaths.js";
 import { listEpisodes, loadProjectMetadata, updateQAIssue } from "../../storage/projectStore.js";
@@ -190,8 +190,8 @@ export async function retryIssueEpisodesResult(
   };
 }
 
-export async function recheckReviewDeskQA(projectDir: string, onProgress?: (progress: ProjectQAProgress) => void, qaOptions?: NovelTransConfig["qa"]): Promise<string> {
-  const issues = await rerunProjectQA(projectDir, onProgress, qaOptions);
+export async function recheckReviewDeskQA(projectDir: string, onProgress?: (progress: ProjectQAProgress) => void, qaOptions?: NovelTransConfig["qa"], options: ProjectQAOptions = {}): Promise<string> {
+  const issues = await rerunProjectQA(projectDir, onProgress, qaOptions, options);
   const openIssueCount = issues.filter((issue) => !issue.resolved).length;
   const metadata = await loadProjectMetadata(projectDir);
   await writeProjectLog({
@@ -202,7 +202,9 @@ export async function recheckReviewDeskQA(projectDir: string, onProgress?: (prog
     projectId: metadata.id,
     metadata: { issueCount: openIssueCount, totalIssueCount: issues.length }
   });
-  return `검수 재검사 완료: 열린 항목 ${openIssueCount}개.`;
+  const excludedCount = new Set(options.excludeEpisodeIds ?? []).size;
+  const suffix = excludedCount > 0 ? ` 재번역 중 ${excludedCount}화 제외.` : "";
+  return `검수 재검사 완료: 열린 항목 ${openIssueCount}개.${suffix}`;
 }
 
 export async function openSelectedIssueTranslation(

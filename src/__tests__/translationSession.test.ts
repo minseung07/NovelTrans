@@ -125,6 +125,69 @@ test("TranslationSession records unavailable backend failures", async () => {
   }
 });
 
+test("TranslationSession treats provider timeouts as failed episodes, not cancellations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-session-timeout-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 時間切れ", "黒架は歩いた。"].join("\n"),
+    sourceLabel: "paste://session-timeout-test",
+    projectRoot: join(root, "projects"),
+    name: "Timeout Session Novel",
+    backend: "timeout-test",
+    model: "timeout-test",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+
+  const session = await TranslationSession.create({
+    projectDir: created.metadata.projectDir,
+    adapter: new TimeoutAdapter(),
+    mode: "resume"
+  });
+
+  const snapshot = await session.start();
+  assert.equal(snapshot.status, "failed");
+  assert.equal(snapshot.failed, 1);
+
+  const overview = await loadProjectOverview(created.metadata.projectDir);
+  assert.equal(overview.counts.failed, 1);
+  assert.equal(overview.counts.pending, 0);
+});
+
+test("concurrent translation sessions claim each episode only once", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-session-claims-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 一", "一。", "", "第2話 二", "二。", "", "第3話 三", "三。"].join("\n"),
+    sourceLabel: "paste://session-claim-test",
+    projectRoot: join(root, "projects"),
+    name: "Claim Session Novel",
+    backend: "claim-test",
+    model: "claim-test",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+  const translatedIds: string[] = [];
+  const first = await TranslationSession.create({
+    projectDir: created.metadata.projectDir,
+    adapter: new ClaimRecordingAdapter("claim-a", translatedIds),
+    mode: "resume"
+  });
+  const second = await TranslationSession.create({
+    projectDir: created.metadata.projectDir,
+    adapter: new ClaimRecordingAdapter("claim-b", translatedIds),
+    mode: "resume"
+  });
+
+  const [firstSnapshot, secondSnapshot] = await Promise.all([first.start(), second.start()]);
+  assert.equal(firstSnapshot.completed + secondSnapshot.completed, 3);
+  assert.equal(translatedIds.length, 3);
+  assert.deepEqual([...translatedIds].sort(), ["episode_00001", "episode_00002", "episode_00003"]);
+
+  const overview = await loadProjectOverview(created.metadata.projectDir);
+  assert.equal(overview.counts.completed, 3);
+});
+
 test("TranslationSession preserves glossary candidates from parallel workers", async () => {
   const root = await mkdtemp(join(tmpdir(), "noveltrans-session-glossary-"));
   const created = await createProjectFromText({
@@ -251,6 +314,50 @@ class UnavailableAdapter implements TranslatorAdapter {
 
   async translateEpisode(): Promise<TranslationResult> {
     throw new Error("should not translate");
+  }
+}
+
+class TimeoutAdapter implements TranslatorAdapter {
+  readonly id = "timeout-test";
+  readonly label = "Timeout test adapter";
+
+  async checkAvailability(): Promise<AdapterStatus> {
+    return { available: true, message: "ok" };
+  }
+
+  async translateEpisode(): Promise<TranslationResult> {
+    const error = new Error("provider timed out");
+    error.name = "TimeoutError";
+    throw error;
+  }
+}
+
+class ClaimRecordingAdapter implements TranslatorAdapter {
+  readonly label = "Claim recording test adapter";
+
+  constructor(
+    readonly id: string,
+    private readonly translatedIds: string[]
+  ) {}
+
+  async checkAvailability(): Promise<AdapterStatus> {
+    return { available: true, message: "ok" };
+  }
+
+  async translateEpisode(input: TranslationInput): Promise<TranslationResult> {
+    await sleep(60);
+    this.translatedIds.push(input.episode.id);
+    return {
+      episodeId: input.episode.id,
+      titleKo: `제${input.episode.episodeNo}화`,
+      bodyKo: `번역 ${input.episode.id}`,
+      usedGlossaryEntries: [],
+      newGlossaryCandidates: [],
+      qaIssueIds: [],
+      model: "claim-test",
+      backend: this.id,
+      createdAt: nowIso()
+    };
   }
 }
 

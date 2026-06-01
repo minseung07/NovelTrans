@@ -1,6 +1,6 @@
 import type { Episode } from "../domain/episode.js";
 import type { NovelTransConfig } from "../domain/config.js";
-import type { ProjectMetadata, RunRecord } from "../domain/project.js";
+import type { EpisodeStatus, ProjectMetadata, RunRecord } from "../domain/project.js";
 import type { TranslatorAdapter } from "../domain/translation.js";
 import {
   listEpisodes,
@@ -147,9 +147,11 @@ export class TranslationSession {
     let runCreated = false;
     try {
       const episodes = await listEpisodes(this.metadata.projectDir);
+      stateStore.initializeEpisodeStates(episodes);
       const states = stateStore.listEpisodeStates();
       const stateById = new Map(states.map((state) => [state.episodeId, state]));
-      const queue = episodes.filter((episode) => shouldQueue(stateById.get(episode.id)?.status, this.mode));
+      const staleRunningBefore = staleRunningBeforeIso();
+      const queue = episodes.filter((episode) => shouldQueue(stateById.get(episode.id)?.status, stateById.get(episode.id)?.updatedAt, this.mode, staleRunningBefore));
       this.queued = queue.length;
       this.skipped = episodes.length - queue.length;
       run.episodeCount = queue.length;
@@ -170,7 +172,7 @@ export class TranslationSession {
       const glossaryUpdater = new ProjectGlossaryUpdater(this.metadata.projectDir, glossary);
 
       const workerCount = Math.max(1, Math.min(this.metadata.options.concurrency, queue.length || 1));
-      await Promise.all(Array.from({ length: workerCount }, () => this.runWorker(queue, glossaryUpdater, stateStore)));
+      await Promise.all(Array.from({ length: workerCount }, () => this.runWorker(queue, glossaryUpdater, stateStore, staleRunningBefore)));
 
       await writeQualityReport(this.metadata.projectDir, await readAllQAIssues(this.metadata.projectDir));
       if (this.status !== "cancelled") {
@@ -205,7 +207,7 @@ export class TranslationSession {
     }
   }
 
-  private async runWorker(queue: Episode[], glossaryUpdater: ProjectGlossaryUpdater, stateStore: ProjectStateStore): Promise<void> {
+  private async runWorker(queue: Episode[], glossaryUpdater: ProjectGlossaryUpdater, stateStore: ProjectStateStore, staleRunningBefore: string): Promise<void> {
     while (queue.length > 0) {
       await this.waitWhilePaused();
       if (this.status === "cancelled") {
@@ -215,13 +217,16 @@ export class TranslationSession {
       if (!episode) {
         return;
       }
+      if (!stateStore.claimEpisodeForTranslation(episode.id, claimableStatuses(this.mode), this.mode === "resume" ? staleRunningBefore : undefined)) {
+        this.skipped += 1;
+        continue;
+      }
       await this.translateEpisode(episode, glossaryUpdater, stateStore);
     }
   }
 
   private async translateEpisode(episode: Episode, glossaryUpdater: ProjectGlossaryUpdater, stateStore: ProjectStateStore): Promise<void> {
     this.activeEpisodes.set(episode.id, { episodeNo: episode.episodeNo, title: episode.title });
-    stateStore.markEpisodeRunning(episode.id);
     await this.log("translation", "episode_started", `${episode.title} started.`, undefined, episode.id);
     try {
       const { result, issues } = await translateAndPersistEpisode({
@@ -320,7 +325,9 @@ function sessionStatusLabel(status: TranslationSessionStatus): string {
   return "대기";
 }
 
-function shouldQueue(status: string | undefined, mode: TranslationMode): boolean {
+const staleRunningClaimMs = 15 * 60 * 1000;
+
+function shouldQueue(status: string | undefined, updatedAt: string | undefined, mode: TranslationMode, staleRunningBefore: string): boolean {
   if (!status) {
     return true;
   }
@@ -330,7 +337,21 @@ function shouldQueue(status: string | undefined, mode: TranslationMode): boolean
   if (mode === "pending-only") {
     return status === "pending";
   }
-  return status === "pending" || status === "failed" || status === "running";
+  return status === "pending" || status === "failed" || (status === "running" && Boolean(updatedAt && updatedAt < staleRunningBefore));
+}
+
+function claimableStatuses(mode: TranslationMode): EpisodeStatus[] {
+  if (mode === "retry-failed") {
+    return ["failed"];
+  }
+  if (mode === "pending-only") {
+    return ["pending"];
+  }
+  return ["pending", "failed"];
+}
+
+function staleRunningBeforeIso(): string {
+  return new Date(Date.now() - staleRunningClaimMs).toISOString();
 }
 
 async function sleep(ms: number): Promise<void> {

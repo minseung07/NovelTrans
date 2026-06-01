@@ -24,6 +24,11 @@ type QASegment = {
   targetParagraphs: string[];
 };
 
+type MissingNumber = {
+  number: string;
+  count: number;
+};
+
 export function runQA(episode: Episode, result: TranslationResult, glossary: GlossaryData, options: QAOptions = defaultQAOptions): QAIssue[] {
   const issues: QAIssue[] = [];
   const add = (issue: Omit<QAIssue, "id" | "episodeId" | "resolved" | "createdAt">): void => {
@@ -126,16 +131,17 @@ function applySegmentChecks(
     });
   }
 
-  const sourceNumbers = new Set(extractNumbers(segment.sourceText));
-  const targetNumbers = new Set(extractNumbers(segment.targetText));
-  const missingNumbers = Array.from(sourceNumbers).filter((number) => !targetNumbers.has(number));
+  const missingNumbers = missingNumberCounts(numberCounts(extractNumbers(segment.sourceText)), numberCounts(extractNumbers(segment.targetText)));
   if (options.numberMismatch && missingNumbers.length > 0) {
-    const numberParagraph = firstParagraph(segment.sourceParagraphs, (paragraph) => missingNumbers.some((number) => extractNumbers(paragraph).includes(number)));
+    const numberParagraph = firstParagraph(segment.sourceParagraphs, (paragraph) => {
+      const paragraphNumbers = extractNumbers(paragraph);
+      return missingNumbers.some((missing) => paragraphNumbers.includes(missing.number));
+    });
     add({
       type: "number_mismatch",
       severity: "warning",
       section: segment.section,
-      message: `Numbers missing or changed in ${segment.section}: ${missingNumbers.join(", ")}.`,
+      message: `Numbers missing or changed in ${segment.section}: ${missingNumbers.map(formatMissingNumber).join(", ")}.`,
       sourceParagraphIndex: numberParagraph?.index,
       sourceSnippet: numberParagraph ? snippet(numberParagraph.text) : undefined
     });
@@ -150,6 +156,29 @@ function applySegmentChecks(
       message: `Length ratio is unusual in ${segment.section}: ${ratio.toFixed(2)}.`
     });
   }
+}
+
+function numberCounts(numbers: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const number of numbers) {
+    counts.set(number, (counts.get(number) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function missingNumberCounts(sourceCounts: Map<string, number>, targetCounts: Map<string, number>): MissingNumber[] {
+  const missing: MissingNumber[] = [];
+  for (const [number, sourceCount] of sourceCounts) {
+    const missingCount = sourceCount - (targetCounts.get(number) ?? 0);
+    if (missingCount > 0) {
+      missing.push({ number, count: missingCount });
+    }
+  }
+  return missing;
+}
+
+function formatMissingNumber(missing: MissingNumber): string {
+  return missing.count > 1 ? `${missing.number} x${missing.count}` : missing.number;
 }
 
 function applyGlossaryChecks(

@@ -7,9 +7,13 @@ import { nowIso } from "../utils/time.js";
 type SqliteRow = Record<string, unknown>;
 
 type StatementLike = {
-  run(...params: unknown[]): unknown;
+  run(...params: unknown[]): StatementRunResult;
   get(...params: unknown[]): SqliteRow | undefined;
   all(...params: unknown[]): SqliteRow[];
+};
+
+type StatementRunResult = {
+  changes?: number | bigint;
 };
 
 type DatabaseLike = {
@@ -63,6 +67,29 @@ export class ProjectStateStore {
       .run(nowIso(), episodeId);
   }
 
+  claimEpisodeForTranslation(episodeId: string, claimableStatuses: EpisodeStatus[], staleRunningBefore?: string): boolean {
+    if (claimableStatuses.length === 0 && !staleRunningBefore) {
+      return false;
+    }
+    const statusPlaceholders = claimableStatuses.map(() => "?").join(", ");
+    const clauses: string[] = [];
+    const params: unknown[] = [nowIso(), episodeId];
+    if (claimableStatuses.length > 0) {
+      clauses.push(`status IN (${statusPlaceholders})`);
+      params.push(...claimableStatuses);
+    }
+    if (staleRunningBefore) {
+      clauses.push("(status = 'running' AND updated_at < ?)");
+      params.push(staleRunningBefore);
+    }
+    const result = this.db
+      .prepare(
+        `UPDATE episode_states SET status = 'running', attempts = attempts + 1, error_message = NULL, updated_at = ? WHERE episode_id = ? AND (${clauses.join(" OR ")})`
+      )
+      .run(...params);
+    return changedRows(result) > 0;
+  }
+
   setEpisodeStatus(episodeId: string, status: EpisodeStatus, errorMessage: string | null = null): void {
     this.db
       .prepare("UPDATE episode_states SET status = ?, error_message = ?, updated_at = ? WHERE episode_id = ?")
@@ -103,6 +130,7 @@ export class ProjectStateStore {
 
   private initialize(): void {
     this.db.exec(`
+      PRAGMA busy_timeout = 5000;
       PRAGMA journal_mode = WAL;
 
       CREATE TABLE IF NOT EXISTS episode_states (
@@ -129,6 +157,14 @@ export class ProjectStateStore {
       );
     `);
   }
+}
+
+function changedRows(result: StatementRunResult): number {
+  const changes = result.changes;
+  if (typeof changes === "bigint") {
+    return Number(changes);
+  }
+  return changes ?? 0;
 }
 
 function loadDatabaseSync(): new (path: string) => DatabaseLike {

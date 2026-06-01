@@ -46,24 +46,24 @@ function activeQaEpisodeIds(job: Job | null): string[] {
 
 function stageBadge(stage: Stage, project: ProjectUiModel, job: Job | null): RailItem["badge"] {
   if (stage === "source") {
-    return { level: "info", text: String(project.episodes.length) };
+    return { level: "info", text: `${project.episodes.length}화` };
   }
   if (stage === "translate" && project.overview.counts.failed > 0) {
-    return { level: "critical", text: String(project.overview.counts.failed) };
+    return { level: "critical", text: `실패${project.overview.counts.failed}` };
   }
   if (stage === "glossary") {
     if (project.glossaryPulse.conflicts > 0) {
-      return { level: "critical", text: String(project.glossaryPulse.conflicts) };
+      return { level: "critical", text: `충돌${project.glossaryPulse.conflicts}` };
     }
     if (project.glossaryPulse.candidates > 0) {
-      return { level: "info", text: String(project.glossaryPulse.candidates) };
+      return { level: "info", text: `후보${project.glossaryPulse.candidates}` };
     }
   }
   if (stage === "qa") {
     const hidden = new Set(activeQaEpisodeIds(job));
     const open = project.qaIssues.filter((issue) => !issue.resolved && !hidden.has(issue.episodeId)).length;
     if (open > 0) {
-      return { level: "warning", text: String(open) };
+      return { level: "warning", text: `검수${open}` };
     }
   }
   return undefined;

@@ -51,9 +51,10 @@ export function resolveAction(context: Context, token: string): Action | null {
 }
 
 export function contextHints(context: Context): string[] {
-  return keyBindings
-    .filter((binding) => binding.context === context && binding.hint)
-    .map((binding) => binding.hint!);
+  if (context === "library") {
+    return ["[Enter] 열기", "[/] 검색", "[N] 가져오기", "[S] 설정", "[?] 도움말"];
+  }
+  return ["[1-6] 단계", "[T] 번역", "[:] 명령", "[?] 도움말", "[Esc] 뒤로"];
 }
 
 // Static validation: a (context, key) pair must map to a single action.

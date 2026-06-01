@@ -6,10 +6,24 @@ type CodexCommandResult = {
   stderr: string;
 };
 
-export async function runCodexCommand(command: string, args: string[], timeoutMs: number, stdin?: string, signal?: AbortSignal): Promise<CodexCommandResult> {
+type CodexCommandOptions = {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+export async function runCodexCommand(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+  stdin?: string,
+  signal?: AbortSignal,
+  options: CodexCommandOptions = {}
+): Promise<CodexCommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd: options.cwd,
+      env: options.env
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];

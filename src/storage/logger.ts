@@ -51,12 +51,40 @@ export async function readProjectLogTail(projectDir: string, category: LogCatego
     return [];
   }
   const content = await readLogTailContent(path, limit);
-  return content
+  const lines = content
     .trim()
     .split("\n")
     .filter(Boolean)
-    .slice(-limit)
-    .map((line) => JSON.parse(line) as LogEntry);
+    .slice(-limit);
+  const entries: LogEntry[] = [];
+  let malformedLineCount = 0;
+  for (const line of lines) {
+    const entry = parseLogLine(line);
+    if (entry) {
+      entries.push(entry);
+    } else {
+      malformedLineCount += 1;
+    }
+  }
+  if (malformedLineCount > 0) {
+    entries.push({
+      timestamp: new Date().toISOString(),
+      level: "warn",
+      category,
+      event: "malformed_log_lines_skipped",
+      message: `${malformedLineCount} malformed ${category} log line(s) were skipped.`,
+      metadata: { malformedLineCount }
+    });
+  }
+  return entries.slice(-limit);
+}
+
+function parseLogLine(line: string): LogEntry | null {
+  try {
+    return JSON.parse(line) as LogEntry;
+  } catch {
+    return null;
+  }
 }
 
 async function readLogTailContent(path: string, limit: number): Promise<string> {

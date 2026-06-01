@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { saveOpenAICompatibleApiKey, loadOpenAICompatibleApiKey, clearOpenAICompatibleApiKey, getCredentialPath } from "../config/credentialStore.js";
@@ -25,6 +25,15 @@ test("stores OpenAI-compatible API key outside plain config text", async () => {
 
   await clearOpenAICompatibleApiKey(configDir);
   assert.equal(loadOpenAICompatibleApiKey(configDir), undefined);
+});
+
+test("credential loading treats corrupted local stores as unavailable", async () => {
+  const configDir = await mkdtemp(join(tmpdir(), "noveltrans-bad-credentials-"));
+  await writeFile(getCredentialPath(configDir), "{not-json", "utf8");
+  assert.equal(loadOpenAICompatibleApiKey(configDir), undefined);
+
+  await saveOpenAICompatibleApiKey("sk-recovered", configDir);
+  assert.equal(loadOpenAICompatibleApiKey(configDir), "sk-recovered");
 });
 
 test("config loading falls back safely for malformed nested values", async () => {
@@ -119,7 +128,7 @@ test("Codex CLI adapter invokes codex exec and reads the last message file", asy
       "const outputIndex = args.indexOf('--output-last-message');",
       "if (execIndex < 0 || outputIndex < 0) process.exit(2);",
       "if (approvalIndex < 0 || approvalIndex > execIndex) process.exit(3);",
-      "writeFileSync(args[outputIndex + 1], '테스트 번역문입니다. 12', 'utf8');"
+      "writeFileSync(args[outputIndex + 1], JSON.stringify({ titleKo: '제1화', bodyKo: '테스트 번역문입니다. 12', newGlossaryCandidates: [] }), 'utf8');"
     ].join("\n"),
     "utf8"
   );
@@ -153,6 +162,95 @@ test("Codex CLI adapter invokes codex exec and reads the last message file", asy
   assert.equal(result.model, "codex-test");
 });
 
+test("Codex CLI adapter isolates translation exec from workspace-write config and ambient env", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-codex-isolation-"));
+  const fakeCodex = join(root, "fake-codex.mjs");
+  const workspaceSecret = join(root, "workspace-secret.txt");
+  const workspaceMarker = join(root, "workspace-marker.txt");
+  const originalSecretPath = process.env.NOVELTRANS_SECRET_PATH;
+  const originalMarkerPath = process.env.NOVELTRANS_MARKER_PATH;
+  context.after(() => {
+    if (originalSecretPath === undefined) {
+      delete process.env.NOVELTRANS_SECRET_PATH;
+    } else {
+      process.env.NOVELTRANS_SECRET_PATH = originalSecretPath;
+    }
+    if (originalMarkerPath === undefined) {
+      delete process.env.NOVELTRANS_MARKER_PATH;
+    } else {
+      process.env.NOVELTRANS_MARKER_PATH = originalMarkerPath;
+    }
+  });
+  process.env.NOVELTRANS_SECRET_PATH = workspaceSecret;
+  process.env.NOVELTRANS_MARKER_PATH = workspaceMarker;
+  await writeFile(workspaceSecret, "workspace secret", "utf8");
+  await writeFile(
+    fakeCodex,
+    [
+      "#!/usr/bin/env node",
+      "import { readFileSync, writeFileSync } from 'node:fs';",
+      "const args = process.argv.slice(2);",
+      "if (args.includes('--version')) { console.log('codex 0.0.0-test'); process.exit(0); }",
+      "if (args[0] === 'login' && args[1] === 'status') { console.log('Logged in using test'); process.exit(0); }",
+      "const sandboxIndex = args.indexOf('--sandbox');",
+      "const outputIndex = args.indexOf('--output-last-message');",
+      "if (args.indexOf('exec') < 0 || sandboxIndex < 0 || outputIndex < 0) process.exit(2);",
+      "const report = {",
+      "  sandboxValue: args[sandboxIndex + 1],",
+      "  cwd: process.cwd(),",
+      "  envKeys: Object.keys(process.env).sort(),",
+      "  secretPathVisible: Boolean(process.env.NOVELTRANS_SECRET_PATH),",
+      "  markerPathVisible: Boolean(process.env.NOVELTRANS_MARKER_PATH),",
+      "  secretRead: false,",
+      "  markerWritten: false",
+      "};",
+      "try { if (process.env.NOVELTRANS_SECRET_PATH) { readFileSync(process.env.NOVELTRANS_SECRET_PATH, 'utf8'); report.secretRead = true; } } catch {}",
+      "try { if (process.env.NOVELTRANS_MARKER_PATH) { writeFileSync(process.env.NOVELTRANS_MARKER_PATH, 'written by fake codex', 'utf8'); report.markerWritten = true; } } catch {}",
+      "writeFileSync(args[outputIndex + 1], JSON.stringify({ titleKo: '격리', bodyKo: JSON.stringify(report), newGlossaryCandidates: [] }), 'utf8');"
+    ].join("\n"),
+    "utf8"
+  );
+  await chmod(fakeCodex, 0o755);
+
+  const adapter = new CodexCliAdapter({
+    command: fakeCodex,
+    timeoutMs: 5000,
+    sandbox: "workspace-write"
+  });
+  const result = await adapter.translateEpisode({
+    episode: {
+      id: "episode_001",
+      episodeNo: 1,
+      title: "第1話",
+      sourceText: "黒架は指示を読んだ。",
+      body: "黒架は指示を読んだ。",
+      sourceHash: "hash",
+      metadata: {}
+    },
+    glossaryEntries: [],
+    glossaryContext: ""
+  });
+  const report = JSON.parse(result.bodyKo) as {
+    sandboxValue: string;
+    cwd: string;
+    envKeys: string[];
+    secretPathVisible: boolean;
+    markerPathVisible: boolean;
+    secretRead: boolean;
+    markerWritten: boolean;
+  };
+
+  assert.equal(report.sandboxValue, "read-only");
+  assert.match(report.cwd, /noveltrans-codex-/);
+  assert.equal(report.secretPathVisible, false);
+  assert.equal(report.markerPathVisible, false);
+  assert.equal(report.envKeys.includes("NOVELTRANS_SECRET_PATH"), false);
+  assert.equal(report.envKeys.includes("NOVELTRANS_MARKER_PATH"), false);
+  assert.equal(report.secretRead, false);
+  assert.equal(report.markerWritten, false);
+  await assert.rejects(() => access(workspaceMarker));
+});
+
 test("Codex CLI factory does not force the generic default model", async () => {
   const root = await mkdtemp(join(tmpdir(), "noveltrans-codex-factory-"));
   const fakeCodex = join(root, "fake-codex.mjs");
@@ -167,7 +265,7 @@ test("Codex CLI factory does not force the generic default model", async () => {
       "if (args.includes('--model')) { console.error('generic model was forced'); process.exit(4); }",
       "const outputIndex = args.indexOf('--output-last-message');",
       "if (args.indexOf('exec') < 0 || outputIndex < 0) process.exit(2);",
-      "writeFileSync(args[outputIndex + 1], '팩토리 번역문입니다.', 'utf8');"
+      "writeFileSync(args[outputIndex + 1], JSON.stringify({ titleKo: '제1화', bodyKo: '팩토리 번역문입니다.', newGlossaryCandidates: [] }), 'utf8');"
     ].join("\n"),
     "utf8"
   );
@@ -242,7 +340,7 @@ test("OpenAI-compatible adapter retries transient chat completion failures", asy
     if (calls === 1) {
       return new Response("rate limited", { status: 429 });
     }
-    return new Response(JSON.stringify({ choices: [{ message: { content: "재시도 성공 번역문" } }] }), {
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ titleKo: "제1화", bodyKo: "재시도 성공 번역문", newGlossaryCandidates: [] }) } }] }), {
       status: 200,
       headers: { "Content-Type": "application/json" }
     });
@@ -372,6 +470,45 @@ test("OpenAI-compatible adapter parses translated title and glossary candidates 
   assert.deepEqual(result.newGlossaryCandidates, ["黒架 => 흑가"]);
 });
 
+test("OpenAI-compatible adapter rejects malformed non-JSON translation content", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ choices: [{ message: { content: "번역은 다음과 같습니다: 흑가는 걸었다." } }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+
+  const adapter = new OpenAICompatibleAdapter({
+    apiKey: "sk-test",
+    baseUrl: "https://example.test/v1",
+    model: "test-model",
+    temperature: 0.2,
+    timeoutMs: 5000
+  });
+
+  await assert.rejects(
+    () =>
+      adapter.translateEpisode({
+        episode: {
+          id: "episode_001",
+          episodeNo: 1,
+          title: "第1話 黒架",
+          sourceText: "黒架は歩いた。",
+          body: "黒架は歩いた。",
+          sourceHash: "hash",
+          metadata: {}
+        },
+        glossaryEntries: [],
+        glossaryContext: "",
+        model: "test-model"
+      }),
+    /strict JSON/
+  );
+});
+
 test("Codex CLI adapter parses translated title from JSON output", async () => {
   const root = await mkdtemp(join(tmpdir(), "noveltrans-codex-json-"));
   const fakeCodex = join(root, "fake-codex.mjs");
@@ -457,6 +594,54 @@ test("OpenAI-compatible adapter does not retry user cancellation", async (contex
         signal: controller.signal
       }),
     /aborted by test/
+  );
+  assert.equal(calls, 1);
+});
+
+test("OpenAI-compatible adapter reports internal request timeouts distinctly", async (context) => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    return new Promise<Response>((_resolve, reject) => {
+      (init?.signal as AbortSignal | undefined)?.addEventListener("abort", () => {
+        const error = new Error("fetch aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    });
+  };
+
+  const adapter = new OpenAICompatibleAdapter({
+    apiKey: "sk-test",
+    baseUrl: "https://example.test/v1",
+    model: "test-model",
+    temperature: 0.2,
+    timeoutMs: 5,
+    maxRetries: 0,
+    retryDelayMs: 0
+  });
+
+  await assert.rejects(
+    () =>
+      adapter.translateEpisode({
+        episode: {
+          id: "episode_001",
+          episodeNo: 1,
+          title: "第1話",
+          sourceText: "黒架は歩いた。",
+          body: "黒架は歩いた。",
+          sourceHash: "hash",
+          metadata: {}
+        },
+        glossaryEntries: [],
+        glossaryContext: "",
+        model: "test-model"
+      }),
+    (error: unknown) => error instanceof Error && error.name === "TimeoutError"
   );
   assert.equal(calls, 1);
 });

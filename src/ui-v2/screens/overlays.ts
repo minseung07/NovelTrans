@@ -8,7 +8,7 @@ import { selectionRow } from "../components/list.js";
 import { severityBadge } from "../components/badge.js";
 import { clamp } from "../components/geometry.js";
 import { keyBindings } from "../state/keymap.js";
-import { filterPaletteCommands } from "../data/palette.js";
+import { filterPaletteCommands, hasProjectOnlyPaletteMatches } from "../data/palette.js";
 
 const STAGE_LEGEND = [
   "공통 · 이동 ↑↓/jk · 선택 Enter · 뒤로 Esc/b · 단계 1~6",
@@ -48,7 +48,7 @@ export function renderPalette(query: string, selected: number, hasProject: boole
   const commands = filterPaletteCommands(query, hasProject);
   const lines: string[] = [`> ${query}`, ""];
   if (commands.length === 0) {
-    lines.push("일치하는 명령이 없습니다.");
+    lines.push(!hasProject && hasProjectOnlyPaletteMatches(query) ? "프로젝트를 연 뒤 사용할 수 있는 명령입니다." : "일치하는 명령이 없습니다.");
   } else {
     const active = clamp(selected, 0, commands.length - 1);
     commands.forEach((command, index) => {

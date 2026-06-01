@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createTheme, setTheme } from "../ui-v2/theme/theme.js";
-import { keymapConflicts, resolveAction, keyToken } from "../ui-v2/state/keymap.js";
+import { keymapConflicts, resolveAction, keyToken, contextHints } from "../ui-v2/state/keymap.js";
 import { initModel, type AppModel } from "../ui-v2/state/model.js";
 import { update, currentList } from "../ui-v2/state/update.js";
+import { view } from "../ui-v2/app.js";
 import { renderLibrary } from "../ui-v2/screens/library.js";
 import type { BookshelfModel, BookshelfProject } from "../ui/types.js";
 import { defaultConfig } from "../config/defaultConfig.js";
@@ -65,6 +66,16 @@ test("library Esc no longer quits; q and Ctrl+C still do", () => {
   assert.equal(resolveAction("library", keyToken({ type: "char", value: "q" })), "quit");
   assert.equal(resolveAction("library", keyToken({ type: "char", value: "ㅂ" })), "quit");
   assert.equal(resolveAction("library", keyToken({ type: "char", value: "C", ctrl: true })), "quit");
+});
+
+test("status bar hints stay focused on the highest-value actions", () => {
+  assert.deepEqual(contextHints("library"), ["[Enter] 열기", "[/] 검색", "[N] 가져오기", "[S] 설정", "[?] 도움말"]);
+  assert.deepEqual(contextHints("project"), ["[1-6] 단계", "[T] 번역", "[:] 명령", "[?] 도움말", "[Esc] 뒤로"]);
+});
+
+test("80-column library status bar keeps the settings shortcut visible", () => {
+  const status = view(model(), { cols: 80, rows: 24 }).split("\n").at(-1)!;
+  assert.ok(status.includes("[S] 설정"));
 });
 
 test("renderLibrary shows hero, project list, and problem panel", () => {

@@ -1,7 +1,7 @@
 import { constants, existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { getDefaultConfigDir } from "./configStore.js";
 
@@ -44,8 +44,12 @@ function loadCredentials(configDir: string): StoredCredentials {
   if (!existsSync(path)) {
     return {};
   }
-  const envelope = JSON.parse(readFileSync(path, "utf8")) as CredentialEnvelope;
-  return decrypt(envelope, configDir);
+  try {
+    const envelope = JSON.parse(readFileSync(path, "utf8")) as CredentialEnvelope;
+    return decrypt(envelope, configDir);
+  } catch {
+    return {};
+  }
 }
 
 async function saveCredentials(credentials: StoredCredentials, configDir: string): Promise<void> {
@@ -82,7 +86,18 @@ function decrypt(envelope: CredentialEnvelope, configDir: string): StoredCredent
   }
   const salt = Buffer.from(envelope.salt, "base64");
   const iv = Buffer.from(envelope.iv, "base64");
-  const key = deriveKey(salt, configDir);
+  try {
+    return decryptWithKey(envelope, deriveKey(salt, configDir), iv);
+  } catch (error) {
+    const legacyKey = deriveLegacyKey(salt, configDir);
+    if (legacyKey.equals(deriveKey(salt, configDir))) {
+      throw error;
+    }
+    return decryptWithKey(envelope, legacyKey, iv);
+  }
+}
+
+function decryptWithKey(envelope: CredentialEnvelope, key: Buffer, iv: Buffer): StoredCredentials {
   const decipher = createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(Buffer.from(envelope.tag, "base64"));
   const plaintext = Buffer.concat([decipher.update(Buffer.from(envelope.ciphertext, "base64")), decipher.final()]);
@@ -90,6 +105,12 @@ function decrypt(envelope: CredentialEnvelope, configDir: string): StoredCredent
 }
 
 function deriveKey(salt: Buffer, configDir: string): Buffer {
+  const user = userInfo().username;
+  const material = `noveltrans:${user}:${hostname()}:${resolve(configDir)}`;
+  return scryptSync(material, salt, 32);
+}
+
+function deriveLegacyKey(salt: Buffer, configDir: string): Buffer {
   const user = userInfo().username;
   const material = `noveltrans:${user}:${hostname()}:${configDir}`;
   return scryptSync(material, salt, 32);

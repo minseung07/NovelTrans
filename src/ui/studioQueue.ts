@@ -5,6 +5,7 @@ const visibleQueueLimit = 5;
 
 export function buildStudioQueue(overview: ProjectOverview): StudioQueue {
   const items = overview.episodeStates.map((state): StudioQueueItem => ({
+    episodeId: state.episodeId,
     episodeNo: state.episodeNo,
     title: state.title,
     status: state.status,

@@ -30,6 +30,12 @@ export async function renderLibraryStatic(config: NovelTransConfig, projectRoot:
   return renderLibrary(initModel(config, library), width(), STATIC_ROWS).join("\n");
 }
 
+export async function renderLibraryPlainStatic(config: NovelTransConfig, projectRoot: string): Promise<string> {
+  setTheme(createTheme(0, false));
+  const library = await loadBookshelfModel(projectRoot);
+  return renderLibrary(initModel(config, library), width(), STATIC_ROWS).join("\n");
+}
+
 export async function renderProjectStageStatic(config: NovelTransConfig, projectDir: string, stage: Stage): Promise<string> {
   applyTheme();
   const project = await loadProjectUiModel(projectDir);

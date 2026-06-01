@@ -13,10 +13,36 @@ type CodexCliAdapterOptions = {
   sandbox: "read-only" | "workspace-write";
 };
 
+const translationSandbox: CodexCliAdapterOptions["sandbox"] = "read-only";
+const codexEnvAllowlist = [
+  "PATH",
+  "HOME",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+  "COLORTERM",
+  "NO_COLOR",
+  "FORCE_COLOR",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "OPENAI_ORG_ID",
+  "OPENAI_PROJECT",
+  "CODEX_HOME",
+  "CODEX_API_KEY"
+] as const;
+
 export class CodexCliAdapter implements TranslatorAdapter {
   readonly id = "codex-cli";
   readonly label = "Codex CLI translator";
   private readonly options: CodexCliAdapterOptions;
+  private availability: Promise<AdapterStatus> | null = null;
 
   constructor(options: Partial<CodexCliAdapterOptions> = {}) {
     this.options = {
@@ -28,6 +54,11 @@ export class CodexCliAdapter implements TranslatorAdapter {
   }
 
   async checkAvailability(): Promise<AdapterStatus> {
+    this.availability ??= this.checkAvailabilityOnce();
+    return this.availability;
+  }
+
+  private async checkAvailabilityOnce(): Promise<AdapterStatus> {
     try {
       const version = await runCodexCommand(this.options.command, ["--version"], Math.min(this.options.timeoutMs, 10000));
       if (version.code !== 0) {
@@ -65,12 +96,12 @@ export class CodexCliAdapter implements TranslatorAdapter {
     const outputPath = join(tempDir, "translation.txt");
     try {
       const model = input.model ?? this.options.model;
-      await runCodexExec({ ...this.options, model }, outputPath, renderPrompt(input), input.signal);
+      await runCodexExec({ ...this.options, model }, tempDir, outputPath, renderPrompt(input), input.signal);
       const content = (await readFile(outputPath, "utf8")).trim();
       if (!content) {
         throw new Error("codex CLI가 빈 번역을 반환했습니다.");
       }
-      const parsed = parseTranslationResponse(content, input.episode.title);
+      const parsed = parseTranslationResponse(content, input.episode.title, { strict: true });
       return {
         episodeId: input.episode.id,
         titleKo: parsed.titleKo,
@@ -88,7 +119,7 @@ export class CodexCliAdapter implements TranslatorAdapter {
   }
 }
 
-async function runCodexExec(options: CodexCliAdapterOptions, outputPath: string, prompt: string, signal?: AbortSignal): Promise<void> {
+async function runCodexExec(options: CodexCliAdapterOptions, cwd: string, outputPath: string, prompt: string, signal?: AbortSignal): Promise<void> {
   const args = [
     "--ask-for-approval",
     "never",
@@ -96,7 +127,7 @@ async function runCodexExec(options: CodexCliAdapterOptions, outputPath: string,
     "--skip-git-repo-check",
     "--ephemeral",
     "--sandbox",
-    options.sandbox,
+    translationSandbox,
     "--color",
     "never",
     "--output-last-message",
@@ -107,10 +138,24 @@ async function runCodexExec(options: CodexCliAdapterOptions, outputPath: string,
   }
   args.push("-");
 
-  const result = await runCodexCommand(options.command, args, options.timeoutMs, prompt, signal);
+  const result = await runCodexCommand(options.command, args, options.timeoutMs, prompt, signal, {
+    cwd,
+    env: sanitizedCodexEnv()
+  });
   if (result.code !== 0) {
     throw new Error(`codex CLI가 종료 코드 ${result.code}로 실패했습니다: ${summarizeCodexOutput(result)}`);
   }
+}
+
+function sanitizedCodexEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const sanitized: NodeJS.ProcessEnv = {};
+  for (const key of codexEnvAllowlist) {
+    const value = env[key];
+    if (typeof value === "string") {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
 }
 
 function isMissingCommandError(error: unknown): boolean {

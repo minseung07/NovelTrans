@@ -7,6 +7,7 @@ import { jobSegment } from "../ui-v2/screens/project/overview.js";
 import { spinnerFrame } from "../ui-v2/components/progress.js";
 import { update } from "../ui-v2/state/update.js";
 import { shouldConfirmQuit } from "../ui-v2/state/update.js";
+import { createEffectRunner } from "../ui-v2/state/effects.js";
 import { view, onKey } from "../ui-v2/app.js";
 import type { Msg } from "../ui-v2/state/msg.js";
 import { severityBadge } from "../ui-v2/components/badge.js";
@@ -79,6 +80,48 @@ test("F8: starting translate while a job runs gives feedback instead of a silent
   const [next, effects] = update(running, { type: "start-translate", mode: "resume" });
   assert.equal(next.message?.level, "warning");
   assert.equal(effects[0]?.kind, "dismiss");
+});
+
+test("dismiss timer resets instead of letting an older timer clear a newer message", () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  type FakeTimer = { callback: () => void; cleared: boolean; ms: number };
+  const timers: FakeTimer[] = [];
+  globalThis.setTimeout = ((callback: TimerHandler, ms?: number) => {
+    const timer = { callback: callback as () => void, cleared: false, ms: Number(ms) };
+    timers.push(timer);
+    return timer as unknown as ReturnType<typeof setTimeout>;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((timer?: ReturnType<typeof setTimeout>) => {
+    if (timer) {
+      (timer as unknown as FakeTimer).cleared = true;
+    }
+  }) as unknown as typeof clearTimeout;
+
+  try {
+    const runEffect = createEffectRunner({ config: { ...defaultConfig }, projectRoot: "/p" });
+    const messages: Msg[] = [];
+    const dispatch = (msg: Msg) => messages.push(msg);
+    const fire = (timer: FakeTimer | undefined) => {
+      if (timer && !timer.cleared) {
+        timer.callback();
+      }
+    };
+
+    runEffect({ kind: "dismiss" }, dispatch);
+    runEffect({ kind: "dismiss" }, dispatch);
+
+    assert.equal(timers.length, 2);
+    assert.equal(timers[0]?.cleared, true);
+    assert.equal(timers[1]?.ms, 3000);
+    fire(timers[0]);
+    assert.deepEqual(messages, []);
+    fire(timers[1]);
+    assert.deepEqual(messages, [{ type: "clear-message" }]);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
 });
 
 test("F8: view shows an overflow indicator when content exceeds the viewport", () => {

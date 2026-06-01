@@ -136,6 +136,20 @@ test("glossary-op confirm resolves the suggested target into an effect", () => {
   assert.equal(effects[1]?.kind, "dismiss");
 });
 
+test("glossary confirm without a target warns without hiding or saving the item", () => {
+  const project = {
+    ...projectFixture(),
+    glossary: { version: 1, entries: [entry("黒架", [])], conflicts: [], updatedAt: "" }
+  } as ProjectUiModel;
+  const model: AppModel = { ...projectModel("glossary"), project };
+  const [next, effects] = update(model, { type: "glossary-op", op: "confirm" });
+  assert.equal(next.message?.level, "warning");
+  assert.ok(next.message?.text.includes("번역을 먼저 입력하세요"));
+  assert.deepEqual(next.deferred, []);
+  assert.equal(effects.length, 1);
+  assert.equal(effects[0]?.kind, "dismiss");
+});
+
 test("glossary action failure restores an optimistically hidden queue item", () => {
   const [hidden] = update(projectModel("glossary"), { type: "glossary-op", op: "discard" });
   assert.deepEqual(hidden.deferred, ["黒架"]);
@@ -203,6 +217,19 @@ test("qa actions target the visible queue when a retranslation job hides episode
   };
   const [, effects] = update(running, { type: "qa-op", op: "ignore" });
   assert.equal(effects[0]?.kind === "qa-action" && effects[0].model.reviewDesk.openIssues[0]?.episodeId, "e2");
+});
+
+test("qa recheck excludes episodes currently under retranslation", () => {
+  const project = twoIssueProjectFixture();
+  const running: AppModel = {
+    ...projectModel("qa"),
+    project,
+    jobsByProjectDir: {
+      "/p/a": { kind: "qa-retranslate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0, episodeIds: ["e1"] }
+    }
+  };
+  const [, effects] = update(running, { type: "qa-op", op: "recheck" });
+  assert.deepEqual(effects[0]?.kind === "qa-action" && effects[0].excludeEpisodeIds, ["e1"]);
 });
 
 test("qa filter cycles through issue buckets", () => {

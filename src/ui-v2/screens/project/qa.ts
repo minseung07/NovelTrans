@@ -101,7 +101,8 @@ export function renderQa(project: ProjectUiModel, selected: number, filter: Revi
     "",
     ...window.items.map((group, index) => selectionRow(severityBadge(groupSeverity(group), `${episodeLabel(group)}  ${group.issues.length}개`), index === window.selectedOffset)),
     "",
-    "[i]무시 [r]재검사 [t]재번역 [g]용어 [a]필터"
+    "[i]무시 [r]재검사 [t]재번역",
+    "[g]용어 [a]필터"
   ];
   return columns("검수 큐", listLines, "원문 / 번역 대조", compareLines(groups[selectedIndex]!), width);
 }

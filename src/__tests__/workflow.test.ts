@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { defaultConfig } from "../config/defaultConfig.js";
@@ -20,7 +20,8 @@ import {
   saveTranslation
 } from "../storage/projectStore.js";
 import { readProjectLogTail } from "../storage/logger.js";
-import { qaEpisodePath, translationJsonPath, translationMarkdownPath } from "../storage/projectPaths.js";
+import { projectPaths, qaEpisodePath, translationJsonPath, translationMarkdownPath } from "../storage/projectPaths.js";
+import { ProjectStateStore } from "../storage/stateStore.js";
 import { importSourceForUi } from "../ui/actions/importActions.js";
 import { loadProjectUiModel } from "../ui/studioData.js";
 import type { AdapterStatus, TranslationInput, TranslationResult, TranslatorAdapter } from "../domain/translation.js";
@@ -115,6 +116,114 @@ test("creates a project from pasted source text", async () => {
   assert.equal(created.metadata.sourcePath, "paste://test");
   const overview = await loadProjectOverview(created.metadata.projectDir);
   assert.equal(overview.counts.pending, 2);
+});
+
+test("project overview repairs a missing state database from source episodes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-missing-state-db-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 一", "一。", "", "第2話 二", "二。"].join("\n"),
+    sourceLabel: "paste://missing-state-db-test",
+    projectRoot: join(root, "projects"),
+    name: "Missing State DB Novel",
+    backend: "dry-run",
+    model: "dry-run",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+  const dbPath = projectPaths(created.metadata.projectDir).projectDb;
+  await Promise.all([rm(dbPath, { force: true }), rm(`${dbPath}-wal`, { force: true }), rm(`${dbPath}-shm`, { force: true })]);
+
+  const overview = await loadProjectOverview(created.metadata.projectDir);
+  assert.equal(overview.episodeStates.length, 2);
+  assert.equal(overview.counts.pending, 2);
+  const events = await readProjectLogTail(created.metadata.projectDir, "translation", 20);
+  const repair = events.find((event) => event.event === "episode_states_repaired");
+  assert.deepEqual(repair?.metadata?.missingEpisodeIds, ["episode_00001", "episode_00002"]);
+});
+
+test("project overview repairs partial state databases without overwriting existing states", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-partial-state-db-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 一", "一。", "", "第2話 二", "二。"].join("\n"),
+    sourceLabel: "paste://partial-state-db-test",
+    projectRoot: join(root, "projects"),
+    name: "Partial State DB Novel",
+    backend: "dry-run",
+    model: "dry-run",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+  const episodes = await listEpisodes(created.metadata.projectDir);
+  const firstEpisode = episodes[0];
+  assert.ok(firstEpisode);
+  const dbPath = projectPaths(created.metadata.projectDir).projectDb;
+  await Promise.all([rm(dbPath, { force: true }), rm(`${dbPath}-wal`, { force: true }), rm(`${dbPath}-shm`, { force: true })]);
+  const stateStore = new ProjectStateStore(dbPath);
+  try {
+    stateStore.initializeEpisodeStates([firstEpisode]);
+    stateStore.setEpisodeStatus(firstEpisode.id, "completed");
+  } finally {
+    stateStore.close();
+  }
+
+  const overview = await loadProjectOverview(created.metadata.projectDir);
+  assert.equal(overview.episodeStates.length, 2);
+  assert.equal(overview.counts.completed, 1);
+  assert.equal(overview.counts.pending, 1);
+  const events = await readProjectLogTail(created.metadata.projectDir, "translation", 20);
+  const repair = events.find((event) => event.event === "episode_states_repaired");
+  assert.deepEqual(repair?.metadata?.missingEpisodeIds, ["episode_00002"]);
+});
+
+test("malformed project log lines are skipped so the UI model can still load", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-bad-log-tail-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 ログ", "黒架は歩いた。"].join("\n"),
+    sourceLabel: "paste://bad-log-tail-test",
+    projectRoot: join(root, "projects"),
+    name: "Bad Log Tail Novel",
+    backend: "dry-run",
+    model: "dry-run",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+  await appendFile(join(projectPaths(created.metadata.projectDir).logsDir, "translation.log"), "not-json\n{\"partial\":\n", "utf8");
+
+  const events = await readProjectLogTail(created.metadata.projectDir, "translation", 20);
+  assert.equal(events.some((event) => event.event === "project_created"), true);
+  const warning = events.find((event) => event.event === "malformed_log_lines_skipped");
+  assert.equal(warning?.metadata?.malformedLineCount, 2);
+  const model = await loadProjectUiModel(created.metadata.projectDir);
+  assert.equal(model.overview.episodeStates.length, 1);
+});
+
+test("concurrent queue translation runs do not translate the same episode twice", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-concurrent-queue-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 一", "一。", "", "第2話 二", "二。", "", "第3話 三", "三。"].join("\n"),
+    sourceLabel: "paste://concurrent-queue-test",
+    projectRoot: join(root, "projects"),
+    name: "Concurrent Queue Novel",
+    backend: "claim-test",
+    model: "claim-test",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+  const translatedIds: string[] = [];
+  const [first, second] = await Promise.all([
+    runTranslation(created.metadata.projectDir, new ClaimAdapter("claim-a", translatedIds), "resume", 1),
+    runTranslation(created.metadata.projectDir, new ClaimAdapter("claim-b", translatedIds), "resume", 1)
+  ]);
+
+  assert.equal(first.completed + second.completed, 3);
+  assert.equal(translatedIds.length, 3);
+  assert.deepEqual([...translatedIds].sort(), ["episode_00001", "episode_00002", "episode_00003"]);
+  const overview = await loadProjectOverview(created.metadata.projectDir);
+  assert.equal(overview.counts.completed, 3);
 });
 
 test("episode artifacts are ordered numerically and legacy 3-digit files stay readable", async () => {
@@ -397,6 +506,55 @@ test("QA recheck clears stale issues for episodes without translations", async (
   assert.equal((await readAllQAIssues(created.metadata.projectDir)).length, 0);
 });
 
+test("QA recheck skips excluded episodes and preserves their existing issues", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-excluded-qa-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 除外", "黒架は歩いた。", "", "第2話 再検査", "聖印は光った。"].join("\n"),
+    sourceLabel: "paste://excluded-qa-test",
+    projectRoot: join(root, "projects"),
+    name: "Excluded QA Novel",
+    backend: "dry-run",
+    model: "dry-run",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+  const episodes = await listEpisodes(created.metadata.projectDir);
+  const excluded = episodes[0]!;
+  const rechecked = episodes[1]!;
+  await saveQAIssues(created.metadata.projectDir, excluded, [
+    {
+      id: "qa_excluded",
+      episodeId: excluded.id,
+      type: "japanese_remaining",
+      severity: "warning",
+      message: "excluded stale",
+      resolved: false,
+      createdAt: nowIso()
+    }
+  ]);
+  await saveQAIssues(created.metadata.projectDir, rechecked, [
+    {
+      id: "qa_rechecked",
+      episodeId: rechecked.id,
+      type: "japanese_remaining",
+      severity: "warning",
+      message: "rechecked stale",
+      resolved: false,
+      createdAt: nowIso()
+    }
+  ]);
+
+  const issues = await rerunProjectQA(created.metadata.projectDir, undefined, undefined, { excludeEpisodeIds: [excluded.id] });
+  assert.equal(issues.length, 0);
+  assert.deepEqual(
+    (await readAllQAIssues(created.metadata.projectDir)).map((issue) => issue.id),
+    ["qa_excluded"]
+  );
+  const report = JSON.parse(await readFile(projectPaths(created.metadata.projectDir).qualityReportJson, "utf8")) as { issues: Array<{ id: string }> };
+  assert.deepEqual(report.issues.map((issue) => issue.id), ["qa_excluded"]);
+});
+
 test("QA recheck preserves resolved issues that are still detected", async () => {
   const root = await mkdtemp(join(tmpdir(), "noveltrans-resolved-qa-"));
   const created = await createProjectFromText({
@@ -626,6 +784,35 @@ class CandidateAdapter implements TranslatorAdapter {
       newGlossaryCandidates: ["黒架 => 흑가"],
       qaIssueIds: [],
       model: "candidate-test",
+      backend: this.id,
+      createdAt: nowIso()
+    };
+  }
+}
+
+class ClaimAdapter implements TranslatorAdapter {
+  readonly label = "Claim test adapter";
+
+  constructor(
+    readonly id: string,
+    private readonly translatedIds: string[]
+  ) {}
+
+  async checkAvailability(): Promise<AdapterStatus> {
+    return { available: true, message: "ok" };
+  }
+
+  async translateEpisode(input: TranslationInput): Promise<TranslationResult> {
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    this.translatedIds.push(input.episode.id);
+    return {
+      episodeId: input.episode.id,
+      titleKo: `제${input.episode.episodeNo}화`,
+      bodyKo: `번역 ${input.episode.id}`,
+      usedGlossaryEntries: [],
+      newGlossaryCandidates: [],
+      qaIssueIds: [],
+      model: "claim-test",
       backend: this.id,
       createdAt: nowIso()
     };

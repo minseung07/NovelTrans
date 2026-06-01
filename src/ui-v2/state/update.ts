@@ -83,9 +83,16 @@ function currentVisibleQaProject(model: AppModel): ProjectUiModel | null {
 }
 
 function setupRequiredModel(model: AppModel): AppModel | null {
-  return model.config.defaultBackend === "openai-compatible" && !model.hasApiKey
+  return activeBackend(model) === "openai-compatible" && !model.hasApiKey
     ? { ...model, overlay: { kind: "setup", step: "credentials", validation: { state: "idle", message: "" } } }
     : null;
+}
+
+function activeBackend(model: AppModel): NovelTransConfig["defaultBackend"] | string {
+  if (model.route.screen !== "project") {
+    return model.config.defaultBackend;
+  }
+  return model.project?.overview?.metadata?.options?.backend ?? model.config.defaultBackend;
 }
 
 function episodeLabel(project: NonNullable<AppModel["project"]>, episodeId: string): string {
@@ -188,6 +195,10 @@ function glossaryDoneMessage(op: GlossaryOp, source: string, target: string | nu
   return `용어를 확정했습니다: ${source} -> ${target ?? ""}`;
 }
 
+function missingGlossaryTargetMessage(): AppModel["message"] {
+  return { text: "번역을 먼저 입력하세요. [e] 편집으로 대상 번역을 입력할 수 있습니다.", level: "warning" };
+}
+
 function startGlossaryAction(model: AppModel, op: GlossaryOp, targetOverride?: string | null): [AppModel, Effect[]] {
   if (model.route.screen !== "project" || !model.project) {
     return [model, []];
@@ -198,7 +209,10 @@ function startGlossaryAction(model: AppModel, op: GlossaryOp, targetOverride?: s
   if (!selected) {
     return [{ ...model, input: null, message: { text: "선택된 용어가 없습니다.", level: "warning" } }, [{ kind: "dismiss" }]];
   }
-  const target = op === "discard" ? null : (targetOverride ?? suggestedGlossaryTarget(model.project, selectedIndex, model.glossaryFilter, model.deferred) ?? "");
+  const target = op === "discard" ? null : (targetOverride ?? suggestedGlossaryTarget(model.project, selectedIndex, model.glossaryFilter, model.deferred) ?? "").trim();
+  if (op !== "discard" && !target) {
+    return [{ ...model, input: null, message: missingGlossaryTargetMessage() }, [{ kind: "dismiss" }]];
+  }
   const deferred = model.deferred.includes(selected.entry.id) ? model.deferred : [...model.deferred, selected.entry.id];
   const remaining = buildGlossaryQueue(model.project, model.glossaryFilter, deferred).length;
   const glossarySelected = remaining === 0 ? 0 : clamp(model.glossarySelected, 0, remaining - 1);
@@ -436,10 +450,11 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
       if (current && isActiveJob(current)) {
         return [{ ...model, message: { text: "이 프로젝트에서 이미 작업이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
       }
-      if (model.config.defaultBackend === "openai-compatible" && !model.hasApiKey) {
+      const backend = activeBackend(model);
+      if (backend === "openai-compatible" && !model.hasApiKey) {
         return [{ ...model, overlay: { kind: "setup", step: "credentials", validation: { state: "idle", message: "" } } }, []];
       }
-      if (model.config.defaultBackend === "dry-run" && !model.dryRunAcknowledged) {
+      if (backend === "dry-run" && !model.dryRunAcknowledged) {
         return [{ ...model, overlay: { kind: "confirm", message: "dry-run 백엔드는 실제 번역이 아니라 자리표시자 텍스트를 만듭니다. 계속할까요? (설정에서 엔진을 바꿀 수 있습니다)", action: msg.mode === "retry-failed" ? "dry-run-retry" : "dry-run-resume" } }, []];
       }
       const job: Job = { kind: msg.mode === "retry-failed" ? "retry" : "translate", projectDir, status: "running", queued: 0, completed: 0, failed: 0 };
@@ -487,7 +502,20 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
       if (msg.op === "retranslate") {
         return startQaRetranslate(model);
       }
-      return [model, [{ kind: "qa-action", op: msg.op, projectDir: model.route.projectDir, model: currentVisibleQaProject(model) ?? model.project, selectedIndex: model.qaSelected, filter: model.qaFilter }]];
+      return [
+        model,
+        [
+          {
+            kind: "qa-action",
+            op: msg.op,
+            projectDir: model.route.projectDir,
+            model: currentVisibleQaProject(model) ?? model.project,
+            selectedIndex: model.qaSelected,
+            filter: model.qaFilter,
+            excludeEpisodeIds: msg.op === "recheck" ? activeQaEpisodeIds(currentProjectJob(model)) : undefined
+          }
+        ]
+      ];
     case "qa-filter": {
       const next = reviewIssueFilterOrder[(reviewIssueFilterOrder.indexOf(model.qaFilter) + 1) % reviewIssueFilterOrder.length]!;
       return [{ ...model, qaFilter: next, qaSelected: 0 }, []];

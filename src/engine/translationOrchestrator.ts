@@ -1,5 +1,5 @@
 import type { NovelTransConfig } from "../domain/config.js";
-import type { EpisodeState, ProjectMetadata, RunRecord } from "../domain/project.js";
+import type { EpisodeState, EpisodeStatus, ProjectMetadata, RunRecord } from "../domain/project.js";
 import type { QAIssue } from "../domain/qa.js";
 import type { TranslatorAdapter } from "../domain/translation.js";
 import {
@@ -38,8 +38,11 @@ export type TranslationSummary = {
 type WorkerResult = {
   completed: number;
   failed: number;
+  skipped: number;
   qaIssues: QAIssue[];
 };
+
+const staleRunningClaimMs = 15 * 60 * 1000;
 
 export async function translateProjectQueue(options: TranslateProjectOptions): Promise<TranslationSummary> {
   const stateStore = new ProjectStateStore(projectPaths(options.metadata.projectDir).projectDb);
@@ -62,9 +65,11 @@ export async function translateProjectQueue(options: TranslateProjectOptions): P
     }
 
     const episodes = await listEpisodes(options.metadata.projectDir);
+    stateStore.initializeEpisodeStates(episodes);
     const states = stateStore.listEpisodeStates();
     const stateById = new Map(states.map((state) => [state.episodeId, state]));
-    const queuedEpisodes = episodes.filter((episode) => shouldQueue(stateById.get(episode.id), options.mode));
+    const staleRunningBefore = staleRunningBeforeIso();
+    const queuedEpisodes = episodes.filter((episode) => shouldQueue(stateById.get(episode.id), options.mode, staleRunningBefore));
     run.episodeCount = queuedEpisodes.length;
     stateStore.createRun(run);
     runCreated = true;
@@ -102,11 +107,12 @@ export async function translateProjectQueue(options: TranslateProjectOptions): P
 
     const queue = [...queuedEpisodes];
     const workerCount = Math.max(1, Math.min(options.concurrency, queue.length || 1));
-    const workers = Array.from({ length: workerCount }, () => runWorker(queue, options, stateStore, glossaryUpdater));
+    const workers = Array.from({ length: workerCount }, () => runWorker(queue, options, stateStore, glossaryUpdater, staleRunningBefore));
     const workerResults = await Promise.all(workers);
 
     const completed = workerResults.reduce((sum, result) => sum + result.completed, 0);
     const failed = workerResults.reduce((sum, result) => sum + result.failed, 0);
+    const skippedByConcurrentClaims = workerResults.reduce((sum, result) => sum + result.skipped, 0);
     const qaIssues = workerResults.flatMap((result) => result.qaIssues);
     const allIssues = await collectAndPersistQualityReport(options.metadata.projectDir, qaIssues);
 
@@ -127,7 +133,7 @@ export async function translateProjectQueue(options: TranslateProjectOptions): P
       queued: queuedEpisodes.length,
       completed,
       failed,
-      skipped: episodes.length - queuedEpisodes.length,
+      skipped: episodes.length - queuedEpisodes.length + skippedByConcurrentClaims,
       qaIssues: allIssues.length
     };
   } catch (error) {
@@ -157,10 +163,12 @@ async function runWorker(
   queue: Awaited<ReturnType<typeof listEpisodes>>,
   options: TranslateProjectOptions,
   stateStore: ProjectStateStore,
-  glossaryUpdater: ProjectGlossaryUpdater
+  glossaryUpdater: ProjectGlossaryUpdater,
+  staleRunningBefore: string
 ): Promise<WorkerResult> {
   let completed = 0;
   let failed = 0;
+  let skipped = 0;
   const qaIssues: QAIssue[] = [];
 
   while (queue.length > 0) {
@@ -168,8 +176,11 @@ async function runWorker(
     if (!episode) {
       continue;
     }
+    if (!stateStore.claimEpisodeForTranslation(episode.id, claimableStatuses(options.mode), options.mode === "resume" ? staleRunningBefore : undefined)) {
+      skipped += 1;
+      continue;
+    }
     try {
-      stateStore.markEpisodeRunning(episode.id);
       await writeProjectLog({
         projectDir: options.metadata.projectDir,
         category: "translation",
@@ -212,10 +223,10 @@ async function runWorker(
     }
   }
 
-  return { completed, failed, qaIssues };
+  return { completed, failed, skipped, qaIssues };
 }
 
-function shouldQueue(state: EpisodeState | undefined, mode: TranslationMode): boolean {
+function shouldQueue(state: EpisodeState | undefined, mode: TranslationMode, staleRunningBefore: string): boolean {
   if (!state) {
     return true;
   }
@@ -225,7 +236,21 @@ function shouldQueue(state: EpisodeState | undefined, mode: TranslationMode): bo
   if (mode === "pending-only") {
     return state.status === "pending";
   }
-  return state.status === "pending" || state.status === "failed" || state.status === "running";
+  return state.status === "pending" || state.status === "failed" || (state.status === "running" && state.updatedAt < staleRunningBefore);
+}
+
+function claimableStatuses(mode: TranslationMode): EpisodeStatus[] {
+  if (mode === "retry-failed") {
+    return ["failed"];
+  }
+  if (mode === "pending-only") {
+    return ["pending"];
+  }
+  return ["pending", "failed"];
+}
+
+function staleRunningBeforeIso(): string {
+  return new Date(Date.now() - staleRunningClaimMs).toISOString();
 }
 
 async function collectAndPersistQualityReport(projectDir: string, currentIssues: QAIssue[]): Promise<QAIssue[]> {

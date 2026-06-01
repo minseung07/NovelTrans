@@ -4,6 +4,69 @@ All notable changes to NovelTrans will be documented in this file.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-01
+
+### Added
+
+- Added CI smoke workflow coverage before package content checks.
+- Added npm provenance publishing and post-publish provenance metadata verification to the release workflow.
+- Added automatic npm release workflow execution when `v*` git tags are pushed.
+- Added plain non-interactive bookshelf output for `noveltrans app`, including no-color rendering for redirected/non-TTY output.
+- Added friendly CLI formatting for SQLite locked/busy errors.
+- Added automatic repair for missing or partial project episode-state databases from persisted source episodes, with repair events written to the translation log.
+- Added SQLite busy timeout and atomic episode-claiming support for queue translation, v2 translation sessions, and single-episode QA retranslation.
+- Added stale-running episode recovery so old running claims can be resumed while active concurrent claims are skipped.
+- Added QA recheck exclusions so episodes currently being retranslated can keep their existing QA issues while the rest of the project is rechecked.
+- Added source-aware glossary context prioritization so relevant confirmed or locked terms, including alias matches, are preferred within glossary prompt limits.
+- Added Japanese numeral normalization for QA number checks, including values such as `十二`, `第七`, `万`, and `億`.
+- Added repeated-number count detection so QA reports missing duplicate numbers instead of only checking unique values.
+- Added strict JSON response validation for OpenAI-compatible and Codex CLI translation responses.
+- Added distinct OpenAI-compatible internal timeout errors while preserving user cancellation behavior.
+- Added Codex CLI translation isolation with a forced read-only sandbox, temporary working directory, sanitized environment allowlist, and cached availability checks.
+- Added v2 command-palette feedback when a search only matches commands that require an open project.
+- Added v2 Translate-stage active rows for QA single and batch retranslation jobs.
+- Added project episode IDs to v2 studio queue items so active retranslation rows can be deduplicated accurately.
+- Added v2 QA stage recheck behavior that excludes currently active QA retranslation episodes.
+- Added v2 status-bar hint compaction so high-value actions remain visible in narrow terminals.
+- Added local credential-store recovery behavior for corrupted credential files and a canonical config-directory key derivation path with legacy fallback.
+- Added log-tail tolerance for malformed project log lines so UI project models can still load.
+
+### Changed
+
+- Bumped package metadata, package lock, and README release examples to `2.2.0`.
+- Updated README documentation to match the current v2 TUI, CLI commands and aliases, import/export behavior, project data layout, credential notes, and npm release workflow.
+- Made translation glossary prompts build per segment/chunk so forewords, afterwords, and long body chunks receive glossary context relevant to their own source text.
+- Made translation completion metadata keep projects in `translating` while any episode state is still running.
+- Made v2 first-run and translation setup checks use the active project backend before falling back to the global default backend.
+- Made v2 glossary confirm/forbid actions trim targets before saving.
+- Made v2 Translate-stage controls state-aware so completed projects do not show pause/retry controls and non-pausable QA jobs only show cancellation.
+- Made v2 stage rail badges more descriptive, for example `42화`, `실패2`, `후보12`, and `검수3`.
+- Split long v2 Glossary and QA key-hint rows to avoid cramped layouts.
+- Made v2 dismiss timers cancel older timers before scheduling a new one, preventing stale timers from clearing newer messages.
+
+### Fixed
+
+- Prevented concurrent CLI queue runs and v2 translation sessions from translating the same episode more than once.
+- Prevented single-episode QA retranslation from taking an episode that another job is already translating.
+- Fixed provider timeout errors being treated as user cancellations; timed-out episodes now fail instead of being returned to pending.
+- Fixed project overviews when `project.db` is missing or only contains some source episodes.
+- Fixed QA rechecks overwriting retained QA issues for episodes intentionally excluded from the recheck.
+- Fixed malformed project log lines causing bookshelf/project UI loading failures.
+- Fixed blank glossary target saves from optimistically hiding queue items.
+- Fixed non-JSON provider responses being accepted as translated body text by real translation adapters.
+- Fixed Codex CLI translation exec inheriting unrelated NovelTrans environment variables or honoring a configured `workspace-write` sandbox.
+- Fixed status-bar overflow that could hide the Library settings shortcut at 80 columns.
+- Fixed palette searches outside a project incorrectly saying there were no matches for project-only commands.
+- Fixed QA retranslation jobs not appearing in the Translate-stage active list.
+- Fixed QA number checks missing Japanese numerals and repeated-number count changes.
+- Fixed corrupted local credential stores blocking later credential saves.
+- Fixed possible temporary-file name collisions during atomic JSON and text writes.
+
+### Tests
+
+- Added release workflow regression coverage for provenance publishing and tag-push triggers.
+- Added regression coverage for corrupted credentials, strict adapter responses, Codex isolation, OpenAI-compatible timeouts, concurrent episode claims, state database repair, malformed logs, QA exclusions, Japanese numeral QA, glossary prioritization, v2 status hints, palette messaging, setup backend precedence, glossary target validation, QA recheck exclusions, dismiss timers, and Translate-stage QA retranslation display.
+
 ## [2.1.5] - 2026-06-01
 
 ### Added

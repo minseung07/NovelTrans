@@ -20,7 +20,7 @@ import { breadcrumb } from "./components/breadcrumb.js";
 import { statusBar } from "./components/statusbar.js";
 import { modal } from "./components/modal.js";
 import { severityBadge } from "./components/badge.js";
-import { MAX_SCREEN_WIDTH, truncate } from "./components/text.js";
+import { MAX_SCREEN_WIDTH, truncate, visibleLength } from "./components/text.js";
 import { loadBookshelfModel } from "./data/library.js";
 import { initModel, type AppModel } from "./state/model.js";
 import { update } from "./state/update.js";
@@ -44,10 +44,36 @@ function contentWidth(size: TerminalSize): number {
   return Math.min(size.cols, MAX_SCREEN_WIDTH);
 }
 
-function statusParts(model: AppModel): string[] {
+function statusLineLength(parts: string[]): number {
+  const sep = getTheme().unicode ? "  ·  " : "  |  ";
+  return visibleLength(parts.filter(Boolean).join(sep));
+}
+
+function compactContextHints(model: AppModel, fixed: string[], width: number): string[] {
+  const priority =
+    model.route.screen === "library"
+      ? ["[Enter] 열기", "[S] 설정", "[N] 가져오기", "[/] 검색", "[?] 도움말"]
+      : ["[1-6] 단계", "[T] 번역", "[:] 명령", "[Esc] 뒤로", "[?] 도움말"];
+  const selected: string[] = [];
+  for (const hint of priority) {
+    if (statusLineLength([...fixed, ...selected, hint]) <= width) {
+      selected.push(hint);
+    }
+  }
+  return [...fixed, ...selected];
+}
+
+function statusParts(model: AppModel, width: number): string[] {
   const meta = [`백엔드 ${model.config.defaultBackend}`, `모델 ${model.config.defaultModel}`, `동시 ${model.config.concurrency}`];
+  const compactMeta = [`백엔드 ${model.config.defaultBackend}`, `동시 ${model.config.concurrency}`];
   const refresh = model.libraryLoading ? ["책장 새로고침 중…"] : [];
-  return [...meta, ...refresh, ...contextHints(model.route.screen)];
+  const hints = contextHints(model.route.screen);
+  for (const candidate of [[...meta, ...refresh, ...hints], [...compactMeta, ...refresh, ...hints], [...refresh, ...hints]]) {
+    if (statusLineLength(candidate) <= width) {
+      return candidate;
+    }
+  }
+  return compactContextHints(model, refresh, width);
 }
 
 function renderOverlay(model: AppModel, width: number): string[] {
@@ -102,7 +128,7 @@ export function view(model: AppModel, size: TerminalSize): string {
     lines.push("");
   }
   lines.push(truncate(model.message ? severityBadge(model.message.level, model.message.text) : "", size.cols));
-  lines.push(truncate(statusBar(statusParts(model)), size.cols));
+  lines.push(truncate(statusBar(statusParts(model, size.cols)), size.cols));
   return lines.join("\n");
 }
 
@@ -367,6 +393,12 @@ export async function runUiV2(options: UiV2Options): Promise<void> {
   setTheme(createTheme(detectColorLevel(output), detectUnicode(output)));
   const projectRoot = resolveProjectRoot(options.config, options.projectRoot);
   const library = await loadBookshelfModel(projectRoot);
+  if (!input.isTTY || !output.isTTY) {
+    setTheme(createTheme(0, false));
+    const size = { cols: output.columns ?? 80, rows: output.rows ?? 24 };
+    output.write(`${renderLibrary(initModel(options.config, library), contentWidth(size), size.rows).join("\n")}\n`);
+    return;
+  }
   const hasApiKey = Boolean(process.env.OPENAI_API_KEY) || Boolean(loadOpenAICompatibleApiKey(options.configDir));
   const firstRun = !(await pathExists(getConfigPath(options.configDir)));
   const baseModel = initModel(options.config, library, hasApiKey);

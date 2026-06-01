@@ -134,5 +134,7 @@ test("renderProject collapses the rail to a tab strip on narrow widths", () => {
   const narrow = renderProject(state, 60, 30).join("\n");
   assert.ok(!narrow.includes("단계"));
   assert.ok(narrow.includes("개요"));
+  assert.ok(narrow.includes("4화"));
+  assert.ok(narrow.includes("충돌1"));
   assert.ok(narrow.includes("파이프라인"));
 });

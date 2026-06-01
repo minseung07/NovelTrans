@@ -15,23 +15,27 @@ export async function confirmSelectedGlossaryTerm(
   filter: GlossaryQueueFilter = "all",
   deferredEntryIds: string[] = []
 ): Promise<string> {
+  const normalizedTarget = target.trim();
+  if (!normalizedTarget) {
+    throw new Error("번역을 먼저 입력하세요.");
+  }
   const selected = selectedGlossaryQueueItem(model, selectedIndex, filter, deferredEntryIds);
   if (!selected) {
     return "선택된 용어가 없습니다.";
   }
   const glossary = await loadGlossary(projectDir);
-  const next = confirmGlossaryTerm(glossary, selected.entry.source, target, lock);
+  const next = confirmGlossaryTerm(glossary, selected.entry.source, normalizedTarget, lock);
   await saveGlossary(projectDir, next);
   const metadata = await loadProjectMetadata(projectDir);
   await writeProjectLog({
     projectDir,
     category: "glossary",
     event: lock ? "term_locked" : "term_confirmed",
-    message: `${selected.entry.source} -> ${target}`,
+    message: `${selected.entry.source} -> ${normalizedTarget}`,
     projectId: metadata.id,
-    metadata: { source: selected.entry.source, target, locked: lock }
+    metadata: { source: selected.entry.source, target: normalizedTarget, locked: lock }
   });
-  return lock ? `용어를 고정했습니다: ${selected.entry.source} -> ${target}` : `용어를 확정했습니다: ${selected.entry.source} -> ${target}`;
+  return lock ? `용어를 고정했습니다: ${selected.entry.source} -> ${normalizedTarget}` : `용어를 확정했습니다: ${selected.entry.source} -> ${normalizedTarget}`;
 }
 
 export async function forbidSelectedGlossaryTarget(
@@ -42,23 +46,27 @@ export async function forbidSelectedGlossaryTarget(
   filter: GlossaryQueueFilter = "all",
   deferredEntryIds: string[] = []
 ): Promise<string> {
+  const normalizedTarget = target.trim();
+  if (!normalizedTarget) {
+    throw new Error("번역을 먼저 입력하세요.");
+  }
   const selected = selectedGlossaryQueueItem(model, selectedIndex, filter, deferredEntryIds);
   if (!selected) {
     return "선택된 용어가 없습니다.";
   }
   const glossary = await loadGlossary(projectDir);
-  const next = addForbiddenTarget(glossary, selected.entry.source, target);
+  const next = addForbiddenTarget(glossary, selected.entry.source, normalizedTarget);
   await saveGlossary(projectDir, next);
   const metadata = await loadProjectMetadata(projectDir);
   await writeProjectLog({
     projectDir,
     category: "glossary",
     event: "forbidden_target_added",
-    message: `${selected.entry.source} !-> ${target}`,
+    message: `${selected.entry.source} !-> ${normalizedTarget}`,
     projectId: metadata.id,
-    metadata: { source: selected.entry.source, target }
+    metadata: { source: selected.entry.source, target: normalizedTarget }
   });
-  return `금지 번역을 저장했습니다: ${selected.entry.source} !-> ${target}`;
+  return `금지 번역을 저장했습니다: ${selected.entry.source} !-> ${normalizedTarget}`;
 }
 
 export async function discardSelectedGlossaryTerm(

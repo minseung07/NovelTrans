@@ -18,7 +18,7 @@ import { writeProjectLog } from "../storage/logger.js";
 import { loadGlossary, loadProjectMetadata, saveGlossary, saveProjectMetadata } from "../storage/projectStore.js";
 import { setCodexCliModel, setOpenAICompatibleModel } from "../ui/actions/settingsActions.js";
 import { runUiV2 } from "../ui-v2/app.js";
-import { renderLibraryStatic, renderProjectStageStatic, renderPaletteStatic } from "../ui-v2/static.js";
+import { renderLibraryPlainStatic, renderLibraryStatic, renderProjectStageStatic, renderPaletteStatic } from "../ui-v2/static.js";
 import { errorLogPath, skipFailedAndExport } from "../ui/actions/failureActions.js";
 import { WebImportService } from "../webImport/webImportService.js";
 import { parseArgs, getBooleanOption, getListOption, getStringOption, requireStringOption } from "./args.js";
@@ -120,17 +120,38 @@ export async function runCli(argv: string[], io: CliIO = { stdout: console, stde
         throw new Error(`알 수 없는 명령입니다: ${args.command}. "noveltrans help"를 실행하세요.`);
     }
   } catch (error) {
-    io.stderr.error((error as Error).message);
+    io.stderr.error(formatCliError(error));
     return 1;
   }
 }
 
-async function commandApp(args: ReturnType<typeof parseArgs>, _io: CliIO): Promise<void> {
+export function formatCliError(error: unknown): string {
+  if (isSqliteLockedError(error)) {
+    return "프로젝트 데이터베이스가 사용 중입니다. 잠시 후 다시 시도하세요.";
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isSqliteLockedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const code = "code" in error ? String(error.code) : "";
+  const errcode = "errcode" in error ? Number(error.errcode) : NaN;
+  return code === "ERR_SQLITE_ERROR" && (errcode === 5 || errcode === 261 || /database is (?:locked|busy)/i.test(error.message));
+}
+
+async function commandApp(args: ReturnType<typeof parseArgs>, io: CliIO): Promise<void> {
   const config = await loadConfigFromArgs(args);
+  const projectRoot = resolveProjectRoot(config, getStringOption(args, "workspace"));
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    io.stdout.log(await renderLibraryPlainStatic(config, projectRoot));
+    return;
+  }
   await runUiV2({
     config,
     configDir: getStringOption(args, "config-dir"),
-    projectRoot: getStringOption(args, "workspace")
+    projectRoot
   });
 }
 

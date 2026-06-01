@@ -3,7 +3,7 @@ import { basename, join, resolve } from "node:path";
 import type { NovelTransConfig, TranslationStyle } from "../domain/config.js";
 import type { SourceAnalysis } from "../domain/episode.js";
 import type { GlossaryData } from "../domain/glossary.js";
-import type { ProjectMetadata, ProjectOverview } from "../domain/project.js";
+import type { EpisodeState, ProjectMetadata, ProjectOverview } from "../domain/project.js";
 import type { QAIssue } from "../domain/qa.js";
 import type { TranslatorAdapter } from "../domain/translation.js";
 import { analyzeSource } from "./sourceAnalyzer.js";
@@ -12,6 +12,7 @@ import { createEmptyGlossary, extractGlossaryCandidates } from "../glossary/glos
 import { qaIssueFingerprint, runQA } from "../qa/qaEngine.js";
 import {
   createProjectDirectories,
+  listEpisodes,
   loadGlossary,
   loadProjectMetadata,
   readAllQAIssues,
@@ -154,7 +155,7 @@ export async function loadProjectOverview(projectDir: string): Promise<ProjectOv
   const metadata = await loadProjectMetadata(projectDir);
   const stateStore = new ProjectStateStore(projectPaths(projectDir).projectDb);
   try {
-    const episodeStates = stateStore.listEpisodeStates();
+    const episodeStates = await loadRepairedEpisodeStates(projectDir, metadata, stateStore);
     const glossary = await loadGlossary(projectDir);
     const issues = await readAllQAIssues(projectDir);
     return {
@@ -174,6 +175,29 @@ export async function loadProjectOverview(projectDir: string): Promise<ProjectOv
   } finally {
     stateStore.close();
   }
+}
+
+async function loadRepairedEpisodeStates(projectDir: string, metadata: ProjectMetadata, stateStore: ProjectStateStore): Promise<EpisodeState[]> {
+  const episodes = await listEpisodes(projectDir);
+  const existingStates = stateStore.listEpisodeStates();
+  const existingIds = new Set(existingStates.map((state) => state.episodeId));
+  const missingEpisodes = episodes.filter((episode) => !existingIds.has(episode.id));
+  if (missingEpisodes.length === 0) {
+    return existingStates;
+  }
+
+  stateStore.initializeEpisodeStates(missingEpisodes);
+  await writeProjectLog({
+    projectDir,
+    category: "translation",
+    event: "episode_states_repaired",
+    message: `${missingEpisodes.length} missing episode state(s) repaired from source episodes.`,
+    projectId: metadata.id,
+    metadata: {
+      missingEpisodeIds: missingEpisodes.map((episode) => episode.id)
+    }
+  });
+  return stateStore.listEpisodeStates();
 }
 
 export async function runTranslation(
@@ -199,32 +223,41 @@ export type ProjectQAProgress = {
   episodeTitle: string;
 };
 
+export type ProjectQAOptions = {
+  excludeEpisodeIds?: string[];
+};
+
 export async function rerunProjectQA(
   projectDir: string,
   onProgress?: (progress: ProjectQAProgress) => void,
-  qaOptions?: NovelTransConfig["qa"]
+  qaOptions?: NovelTransConfig["qa"],
+  options: ProjectQAOptions = {}
 ): Promise<QAIssue[]> {
   const { listEpisodes } = await import("../storage/projectStore.js");
   const metadata = await loadProjectMetadata(projectDir);
   const episodes = await listEpisodes(projectDir);
   const glossary = await loadGlossary(projectDir);
   const effectiveQAOptions = qaOptions ?? metadata.options.qa;
-  const previousByFingerprint = new Map((await readAllQAIssues(projectDir)).map((issue) => [issue.fingerprint ?? qaIssueFingerprint(issue), issue]));
+  const excludedEpisodeIds = new Set(options.excludeEpisodeIds ?? []);
+  const previousIssues = await readAllQAIssues(projectDir);
+  const previousByFingerprint = new Map(previousIssues.map((issue) => [issue.fingerprint ?? qaIssueFingerprint(issue), issue]));
+  const retainedIssues = previousIssues.filter((issue) => excludedEpisodeIds.has(issue.episodeId));
+  const recheckEpisodes = episodes.filter((episode) => !excludedEpisodeIds.has(episode.id));
   const allIssues: QAIssue[] = [];
-  for (const [index, episode] of episodes.entries()) {
-    onProgress?.({ completed: index, total: episodes.length, episodeTitle: episode.title });
+  for (const [index, episode] of recheckEpisodes.entries()) {
+    onProgress?.({ completed: index, total: recheckEpisodes.length, episodeTitle: episode.title });
     const result = await readTranslation(projectDir, episode);
     if (!result) {
       await saveQAIssues(projectDir, episode, []);
-      onProgress?.({ completed: index + 1, total: episodes.length, episodeTitle: episode.title });
+      onProgress?.({ completed: index + 1, total: recheckEpisodes.length, episodeTitle: episode.title });
       continue;
     }
     const issues = preserveResolvedQAIssues(runQA(episode, result, glossary, effectiveQAOptions), previousByFingerprint);
     await saveQAIssues(projectDir, episode, issues);
     allIssues.push(...issues);
-    onProgress?.({ completed: index + 1, total: episodes.length, episodeTitle: episode.title });
+    onProgress?.({ completed: index + 1, total: recheckEpisodes.length, episodeTitle: episode.title });
   }
-  await writeQualityReport(projectDir, allIssues);
+  await writeQualityReport(projectDir, [...allIssues, ...retainedIssues]);
   return allIssues;
 }
 

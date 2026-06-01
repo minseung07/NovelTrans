@@ -60,6 +60,14 @@ export function filterPaletteCommands(query: string, hasProject: boolean): Palet
     .slice(0, 8);
 }
 
+export function hasProjectOnlyPaletteMatches(query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return paletteCommands.some((command) => command.requiresProject && `${command.id} ${command.label} ${command.hint}`.toLowerCase().includes(normalized));
+}
+
 function paletteScore(command: PaletteCommand, normalized: string): number {
   const id = command.id.toLowerCase();
   const label = command.label.toLowerCase();

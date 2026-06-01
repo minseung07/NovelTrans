@@ -32,6 +32,8 @@ type SingleEpisodeTranslationSummary = {
   qaIssues: number;
 };
 
+const staleRunningClaimMs = 15 * 60 * 1000;
+
 export async function translateSingleEpisode(options: TranslateSingleEpisodeOptions): Promise<SingleEpisodeTranslationSummary> {
   const metadata = await loadProjectMetadata(options.projectDir);
   const episodes = await listEpisodes(options.projectDir);
@@ -54,6 +56,7 @@ export async function translateSingleEpisode(options: TranslateSingleEpisodeOpti
 
   try {
     stateStore.createRun(run);
+    stateStore.initializeEpisodeStates(episodes);
     const status = await options.adapter.checkAvailability();
     if (!status.available) {
       throw new Error(status.message);
@@ -63,7 +66,13 @@ export async function translateSingleEpisode(options: TranslateSingleEpisodeOpti
     metadata.status = "translating";
     metadata.updatedAt = nowIso();
     await saveProjectMetadata(metadata);
-    stateStore.markEpisodeRunning(episode.id);
+    const claimed = stateStore.claimEpisodeForTranslation(episode.id, ["pending", "failed", "completed", "skipped"], staleRunningBeforeIso());
+    if (!claimed) {
+      await finishMetadataFromEpisodeStates(metadata, stateStore);
+      stateStore.finishRun(run.id, "cancelled", "Episode is already being translated.");
+      await logEpisode(metadata, "translation", "episode_retranslate_skipped", `${episode.title} is already being translated.`, episode.id);
+      return { episodeId: episode.id, completed: 0, failed: 0, cancelled: 1, qaIssues: 0 };
+    }
     await logEpisode(metadata, "translation", "episode_retranslate_started", `${episode.title} retranslation started: ${options.reason}.`, episode.id);
 
     const { glossary } = await refreshGlossaryCandidatesForSource(options.projectDir, episodes, await loadGlossary(options.projectDir));
@@ -105,6 +114,10 @@ export async function translateSingleEpisode(options: TranslateSingleEpisodeOpti
   } finally {
     stateStore.close();
   }
+}
+
+function staleRunningBeforeIso(): string {
+  return new Date(Date.now() - staleRunningClaimMs).toISOString();
 }
 
 async function logEpisode(

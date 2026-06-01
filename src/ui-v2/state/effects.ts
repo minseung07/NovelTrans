@@ -40,7 +40,7 @@ export type Effect =
   | { kind: "resume-job"; projectDir: string }
   | { kind: "glossary-action"; op: "confirm" | "lock" | "forbid" | "discard"; projectDir: string; model: ProjectUiModel; selectedIndex: number; filter: GlossaryQueueFilter; deferred: string[]; target: string | null; entryId?: string }
   | { kind: "glossary-export"; projectDir: string }
-  | { kind: "qa-action"; op: "ignore" | "recheck" | "retranslate"; projectDir: string; model: ProjectUiModel; selectedIndex: number; filter: ReviewIssueFilter }
+  | { kind: "qa-action"; op: "ignore" | "recheck" | "retranslate"; projectDir: string; model: ProjectUiModel; selectedIndex: number; filter: ReviewIssueFilter; excludeEpisodeIds?: string[] }
   | { kind: "qa-batch-action"; scope: RetryIssueScope; projectDir: string; model: ProjectUiModel; selectedIndex: number; filter: ReviewIssueFilter }
   | { kind: "review-open-translation"; projectDir: string; model: ProjectUiModel; selectedIndex: number; filter: ReviewIssueFilter }
   | { kind: "related-terms"; model: ProjectUiModel }
@@ -71,6 +71,13 @@ export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch:
   const qaControllers = new Map<string, AbortController>();
   let currentConfig = deps.config;
   const polls = new Map<string, NodeJS.Timeout>();
+  let dismissTimer: NodeJS.Timeout | null = null;
+  const clearDismissTimer = () => {
+    if (dismissTimer) {
+      clearTimeout(dismissTimer);
+      dismissTimer = null;
+    }
+  };
   const stopPoll = (projectDir: string) => {
     const poll = polls.get(projectDir);
     if (poll) {
@@ -138,7 +145,7 @@ export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch:
       return markSelectedIssueIgnored(projectDir, model, selectedIndex, filter);
     }
     if (effect.op === "recheck") {
-      return recheckReviewDeskQA(projectDir, undefined, currentConfig.qa);
+      return recheckReviewDeskQA(projectDir, undefined, currentConfig.qa, { excludeEpisodeIds: effect.excludeEpisodeIds });
     }
     return (await retrySelectedIssueEpisodeResult(projectDir, model, selectedIndex, await createProjectAdapter(projectDir, runtime()), undefined, currentConfig.qa, filter)).message;
   };
@@ -437,8 +444,12 @@ export function createEffectRunner(deps: EffectDeps): (effect: Effect, dispatch:
       return;
     }
     if (effect.kind === "dismiss") {
-      const timer = setTimeout(() => dispatch({ type: "clear-message" }), 3000);
-      return () => clearTimeout(timer);
+      clearDismissTimer();
+      dismissTimer = setTimeout(() => {
+        dismissTimer = null;
+        dispatch({ type: "clear-message" });
+      }, 3000);
+      return clearDismissTimer;
     }
     if (sessions.has(effect.projectDir)) {
       return;

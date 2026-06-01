@@ -1,4 +1,5 @@
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 
 export async function ensureDir(path: string): Promise<void> {
@@ -24,14 +25,18 @@ export async function readJson<T>(path: string): Promise<T> {
 
 export async function writeJson(path: string, value: unknown): Promise<void> {
   await ensureDir(dirname(path));
-  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const tempPath = tempFilePath(path);
   await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   await rename(tempPath, path);
 }
 
 export async function writeText(path: string, value: string): Promise<void> {
   await ensureDir(dirname(path));
-  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const tempPath = tempFilePath(path);
   await writeFile(tempPath, value, "utf8");
   await rename(tempPath, path);
+}
+
+function tempFilePath(path: string): string {
+  return `${path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
 }

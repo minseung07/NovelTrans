@@ -56,7 +56,8 @@ export function renderGlossary(project: ProjectUiModel, selected: number, filter
     "",
     ...window.items.map((item, index) => selectionRow(`${item.entry.source}  ${severityBadge(labelSeverity(item.label), item.label)}`, index === window.selectedOffset)),
     "",
-    "[c]확정 [l]고정 [f]금칙 [e]편집 [d]폐기 [a]필터"
+    "[c]확정 [l]고정 [f]금칙",
+    "[e]편집 [d]폐기 [a]필터"
   ];
   return columns("검토 큐", queueLines, "용어 상세", detailLines(queue[selectedIndex]!.entry), width);
 }
