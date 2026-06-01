@@ -468,7 +468,7 @@ Architecture notes are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The comp
 
 ## Release
 
-GitHub Actions publishes to npm from the `Release` workflow when a `v*` tag is pushed, a GitHub release is published, or the workflow is manually dispatched with a tag.
+GitHub Actions publishes to npm from the `Release` workflow only when the workflow is manually dispatched with a tag. Creating a git tag or publishing a GitHub Release does not publish to npm automatically.
 
 The npm package must have Trusted Publishing configured with:
 
@@ -491,7 +491,7 @@ npm run smoke
 npm run pack:check
 ```
 
-The release workflow runs tests, smoke, package checks, verifies the tag against `package.json`, publishes with `npm publish --provenance`, and checks npm provenance metadata.
+The release workflow runs tests, smoke, package checks, verifies the selected tag against `package.json`, publishes with `npm publish --provenance`, and checks npm provenance metadata.
 
 ## Release Notes
 

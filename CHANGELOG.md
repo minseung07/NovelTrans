@@ -4,13 +4,16 @@ All notable changes to NovelTrans will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Restored npm publishing to explicit manual workflow dispatch so git tags and GitHub Releases can be created without publishing the package again.
+
 ## [2.2.0] - 2026-06-01
 
 ### Added
 
 - Added CI smoke workflow coverage before package content checks.
 - Added npm provenance publishing and post-publish provenance metadata verification to the release workflow.
-- Added automatic npm release workflow execution when `v*` git tags are pushed.
 - Added plain non-interactive bookshelf output for `noveltrans app`, including no-color rendering for redirected/non-TTY output.
 - Added friendly CLI formatting for SQLite locked/busy errors.
 - Added automatic repair for missing or partial project episode-state databases from persisted source episodes, with repair events written to the translation log.
@@ -64,7 +67,7 @@ All notable changes to NovelTrans will be documented in this file.
 
 ### Tests
 
-- Added release workflow regression coverage for provenance publishing and tag-push triggers.
+- Added release workflow regression coverage for provenance publishing.
 - Added regression coverage for corrupted credentials, strict adapter responses, Codex isolation, OpenAI-compatible timeouts, concurrent episode claims, state database repair, malformed logs, QA exclusions, Japanese numeral QA, glossary prioritization, v2 status hints, palette messaging, setup backend precedence, glossary target validation, QA recheck exclusions, dismiss timers, and Translate-stage QA retranslation display.
 
 ## [2.1.5] - 2026-06-01
