@@ -11,7 +11,7 @@
 ## 0. 확정 결정 (변경 시 본 문서부터 갱신)
 
 - **레이아웃:** 좌측 **단계 레일** + 우측 **상세 패널**. 좁은 폭(<폭 임계)에선 상단 번호 스트립으로 접힘.
-- **전역 Job 모델 도입:** 번역/재시도/내보내기/웹가져오기를 1급 `Job`으로. 화면을 떠나도 진행률 유지.
+- **프로젝트별 Job 모델 도입:** 번역/재시도/내보내기를 프로젝트별 `Job`으로. 서로 다른 프로젝트의 번역은 병렬 실행 가능하며, 진행률은 해당 프로젝트 화면에서만 표시.
 - **전환:** 구현 동안 `app --v2` / `NOVELTRANS_UI=v2`로 옛 UI와 병존. 패리티 도달 후 기본값을 v2로 뒤집고 `src/ui/` 제거.
 
 ### 불변 제약 (절대 위반 금지)
@@ -23,7 +23,7 @@
 
 ### 목표 / 비목표
 
-- 목표: 상태 주도 UX, 전역 잡 가시성, 용어/QA 초고속 트리아지, MVU로 유지보수성 확보.
+- 목표: 상태 주도 UX, 프로젝트별 잡 가시성, 용어/QA 초고속 트리아지, MVU로 유지보수성 확보.
 - 비목표: 백엔드 로직 변경, 새 번역 기능, 도메인 모델 재설계. (UI 레이어만 교체)
 
 ---
@@ -51,7 +51,7 @@
 
 **오버레이(풀스크린 아님):** Command Palette(`Ctrl+K`/`:`, 퍼지), Help(`?`), 확인/입력/피커 Modal(중앙 오버레이), Toast(자동 소멸).
 
-**지속 크롬:** 상단 Breadcrumb(`Library › 작품 › 단계`), 하단 StatusBar(백엔드·모델·동시성·**전역 잡 진행률**·시계 + 문맥 키힌트).
+**지속 크롬:** 상단 Breadcrumb(`Library › 작품 › 단계`), 하단 StatusBar(백엔드·모델·동시성 + 문맥 키힌트). 잡 진행률은 프로젝트 상세 화면 안에서만 표시.
 
 **내비/입력 일관 규칙:** `↑↓`·`j/k` 이동, `Enter` 실행, `Esc`·`b` 뒤로, `Tab` 패널 포커스 순환, 숫자키 단계 점프, `Ctrl+K`/`:` 팔레트, `?` 도움말.
 
@@ -98,7 +98,8 @@ interface Model {
   route: Route; projectDir?: string;
   library: { items: ...; query: string; selected: number };
   project?: { model: ProjectUiModel; selections: Record<Stage, number>; ... };
-  job: Job | null;            // 전역 1개(전경) — 화면 무관 지속
+  jobsByProjectDir: Record<string, Job>; // 프로젝트별 전경 잡
+  importJob: Job | null;                 // 새 웹 프로젝트 가져오기
   overlay: Overlay; toast: Toast | null;
   viewport: { cols: number; rows: number }; theme: ThemeState;
 }
@@ -161,16 +162,16 @@ interface Model {
   - [x] 테스트: library view 스냅샷, keymap 충돌 0
 - 게이트: build/test/smoke + Library에서 프로젝트 선택→Project 셸 진입.
 
-### Phase 2 — Project 셸 + Overview + 전역 Job 모델
-- 목표: 단계 레일 골격 + Overview, 번역 잡이 화면 무관하게 StatusBar에 지속.
+### Phase 2 — Project 셸 + Overview + 프로젝트별 Job 모델
+- 목표: 단계 레일 골격 + Overview, 프로젝트별 잡 진행률을 해당 프로젝트 화면에 지속.
 - TODO
-  - [x] `components/`: rail(+narrow 탭 폴백), tabs, statusbar 잡 진행률 슬롯
+  - [x] `components/`: rail(+narrow 탭 폴백), tabs, 프로젝트 화면 잡 진행률 슬롯
   - [x] `state/model.ts` 라우트/단계/선택/`job` 필드, `update.ts` 네비게이션 전이
   - [x] `state/effects.ts` 잡 실행기: `Job` 시작/진행 이벤트→Msg 재투입(translate 우선)
   - [x] `data/project.ts` 셀렉터(기존 `loadProjectUiModel`·`nextActions` 활용)
   - [x] `screens/project/overview.ts`(파이프라인 상태·다음 할 일·라이브 잡·최근 활동)
   - [x] Breadcrumb `Library › 작품 › 단계`, 단계 숫자키 점프
-  - [x] 테스트: overview 스냅샷, update 네비/잡 전이, 잡 진행 중 statusbar 표기
+  - [x] 테스트: overview 스냅샷, update 네비/잡 전이, 프로젝트별 잡 진행 표기
 - 게이트: build/test/smoke + 번역 시작 후 다른 단계로 이동해도 진행률 지속.
 
 ### Phase 3 — Glossary · QA 트리아지 루프
@@ -215,5 +216,5 @@ interface Model {
 - diff 렌더러 경계버그(리사이즈/높이초과) → 골든 프레임 테스트 + `invalidate()` 전체 재그리기.
 - ESC 타임아웃(느린 SSH 화살표 오인식) → 임계값 상수화 + 테스트.
 - CJK 폭 회귀 → 기존 폭 로직 그대로 포팅 + 폭 테스트 보강.
-- 잡 동시성: 프로젝트당 전경 잡 1개 가정. 그 이상은 비목표(향후 과제).
+- 잡 동시성: 프로젝트당 전경 잡 1개, 서로 다른 프로젝트 번역은 병렬 실행 허용. 같은 프로젝트 내 다중 잡은 비목표.
 - 패리티 누락 → Phase 5 e2e 체크리스트로 옛 명령 대비 기능 매핑 확인.

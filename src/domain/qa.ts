@@ -25,6 +25,7 @@ export type QAIssue = {
   sourceSnippet?: string;
   targetSnippet?: string;
   relatedGlossaryEntryId?: string;
+  fingerprint?: string;
   resolved: boolean;
   createdAt: string;
 };

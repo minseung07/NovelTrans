@@ -5,12 +5,12 @@ import { translateSingleEpisode } from "../../engine/singleEpisodeTranslation.js
 import { translationMarkdownPath } from "../../storage/projectPaths.js";
 import { listEpisodes, loadProjectMetadata, updateQAIssue } from "../../storage/projectStore.js";
 import { writeProjectLog } from "../../storage/logger.js";
-import type { ProjectUiModel } from "../types.js";
+import { filterReviewIssues, selectedReviewIssue } from "../reviewDeskModel.js";
+import type { ProjectUiModel, ReviewIssueFilter } from "../types.js";
 import { openFile, type OpenFileOptions } from "./fileOpenActions.js";
 
-function selectedOpenIssue(model: ProjectUiModel, selectedIndex: number) {
-  const issues = model.reviewDesk.openIssues;
-  return issues[selectedIndex] ?? issues[0] ?? null;
+function selectedOpenIssue(model: ProjectUiModel, selectedIndex: number, filter: ReviewIssueFilter = "all") {
+  return selectedReviewIssue(model.reviewDesk, selectedIndex, filter);
 }
 
 type RetryIssueEpisodeResult = {
@@ -23,8 +23,22 @@ type RetryIssueEpisodeResult = {
 
 export type RetryIssueScope = "all-open" | "same-type";
 
-export async function markSelectedIssueIgnored(projectDir: string, model: ProjectUiModel, selectedIndex: number): Promise<string> {
-  const issue = selectedOpenIssue(model, selectedIndex);
+export type RetryIssueProgress = {
+  total: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  currentEpisodeId: string | null;
+  currentEpisodeTitle: string | null;
+};
+
+function episodeTitle(model: ProjectUiModel, episodeId: string): string | null {
+  const episode = model.episodes.find((item) => item.id === episodeId);
+  return episode ? `${episode.episodeNo}화 ${episode.title}` : null;
+}
+
+export async function markSelectedIssueIgnored(projectDir: string, model: ProjectUiModel, selectedIndex: number, filter: ReviewIssueFilter = "all"): Promise<string> {
+  const issue = selectedOpenIssue(model, selectedIndex, filter);
   if (!issue) {
     return "선택된 검수 항목이 없습니다.";
   }
@@ -48,9 +62,11 @@ export async function retrySelectedIssueEpisodeResult(
   selectedIndex: number,
   adapter: TranslatorAdapter,
   signal?: AbortSignal,
-  qaOptions?: NovelTransConfig["qa"]
+  qaOptions?: NovelTransConfig["qa"],
+  filter: ReviewIssueFilter = "all",
+  onProgress?: (progress: RetryIssueProgress) => void
 ): Promise<RetryIssueEpisodeResult> {
-  const issue = selectedOpenIssue(model, selectedIndex);
+  const issue = selectedOpenIssue(model, selectedIndex, filter);
   if (!issue) {
     return {
       episodeId: "",
@@ -60,6 +76,15 @@ export async function retrySelectedIssueEpisodeResult(
       message: "선택된 검수 항목이 없습니다."
     };
   }
+  const label = episodeTitle(model, issue.episodeId) ?? issue.episodeId;
+  onProgress?.({
+    total: 1,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+    currentEpisodeId: issue.episodeId,
+    currentEpisodeTitle: label
+  });
   const summary = await translateSingleEpisode({
     projectDir,
     episodeId: issue.episodeId,
@@ -68,12 +93,20 @@ export async function retrySelectedIssueEpisodeResult(
     signal,
     qaOptions
   });
+  onProgress?.({
+    total: 1,
+    completed: summary.completed,
+    failed: summary.failed,
+    cancelled: summary.cancelled,
+    currentEpisodeId: null,
+    currentEpisodeTitle: null
+  });
   return {
     episodeId: issue.episodeId,
     completed: summary.completed,
     failed: summary.failed,
     cancelled: summary.cancelled,
-    message: `${issue.episodeId} 재번역 완료: 완료 ${summary.completed}, 실패 ${summary.failed}, 취소 ${summary.cancelled}.`
+    message: `${label} 재번역이 마무리되었습니다: 완료 ${summary.completed}, 실패 ${summary.failed}, 취소 ${summary.cancelled}.`
   };
 }
 
@@ -84,9 +117,11 @@ export async function retryIssueEpisodesResult(
   scope: RetryIssueScope,
   adapter: TranslatorAdapter,
   signal?: AbortSignal,
-  qaOptions?: NovelTransConfig["qa"]
+  qaOptions?: NovelTransConfig["qa"],
+  filter: ReviewIssueFilter = "all",
+  onProgress?: (progress: RetryIssueProgress) => void
 ): Promise<RetryIssueEpisodeResult> {
-  const selected = selectedOpenIssue(model, selectedIndex);
+  const selected = selectedOpenIssue(model, selectedIndex, filter);
   if (!selected) {
     return {
       episodeId: "",
@@ -97,7 +132,8 @@ export async function retryIssueEpisodesResult(
     };
   }
 
-  const issues = scope === "same-type" ? model.reviewDesk.openIssues.filter((issue) => issue.type === selected.type) : model.reviewDesk.openIssues;
+  const openIssues = filterReviewIssues(model.reviewDesk.openIssues, filter);
+  const issues = scope === "same-type" ? openIssues.filter((issue) => issue.type === selected.type) : openIssues;
   const episodeIds = Array.from(new Set(issues.map((issue) => issue.episodeId)));
   if (episodeIds.length === 0) {
     return {
@@ -113,6 +149,14 @@ export async function retryIssueEpisodesResult(
   let failed = 0;
   let cancelled = 0;
   for (const episodeId of episodeIds) {
+    onProgress?.({
+      total: episodeIds.length,
+      completed,
+      failed,
+      cancelled,
+      currentEpisodeId: episodeId,
+      currentEpisodeTitle: episodeTitle(model, episodeId)
+    });
     const summary = await translateSingleEpisode({
       projectDir,
       episodeId,
@@ -124,6 +168,14 @@ export async function retryIssueEpisodesResult(
     completed += summary.completed;
     failed += summary.failed;
     cancelled += summary.cancelled;
+    onProgress?.({
+      total: episodeIds.length,
+      completed,
+      failed,
+      cancelled,
+      currentEpisodeId: null,
+      currentEpisodeTitle: null
+    });
     if (signal?.aborted) {
       break;
     }
@@ -134,31 +186,38 @@ export async function retryIssueEpisodesResult(
     completed,
     failed,
     cancelled,
-    message: `검수 화 재번역 완료: 대상 ${episodeIds.length}, 완료 ${completed}, 실패 ${failed}, 취소 ${cancelled}.`
+    message: `검수 화 재번역이 마무리되었습니다: 대상 ${episodeIds.length}, 완료 ${completed}, 실패 ${failed}, 취소 ${cancelled}.`
   };
 }
 
 export async function recheckReviewDeskQA(projectDir: string, onProgress?: (progress: ProjectQAProgress) => void, qaOptions?: NovelTransConfig["qa"]): Promise<string> {
   const issues = await rerunProjectQA(projectDir, onProgress, qaOptions);
+  const openIssueCount = issues.filter((issue) => !issue.resolved).length;
   const metadata = await loadProjectMetadata(projectDir);
   await writeProjectLog({
     projectDir,
     category: "qa",
     event: "qa_rechecked",
-    message: `${issues.length} QA issue(s) after recheck.`,
+    message: `${openIssueCount} open QA issue(s) after recheck.`,
     projectId: metadata.id,
-    metadata: { issueCount: issues.length }
+    metadata: { issueCount: openIssueCount, totalIssueCount: issues.length }
   });
-  return `검수 재검사 완료: ${issues.length}개 항목.`;
+  return `검수 재검사 완료: 열린 항목 ${openIssueCount}개.`;
 }
 
-export async function openSelectedIssueTranslation(projectDir: string, model: ProjectUiModel, selectedIndex: number, options: OpenFileOptions = {}): Promise<string> {
-  const path = await resolveTranslationPathForSelectedIssue(projectDir, model, selectedIndex);
+export async function openSelectedIssueTranslation(
+  projectDir: string,
+  model: ProjectUiModel,
+  selectedIndex: number,
+  filter: ReviewIssueFilter = "all",
+  options: OpenFileOptions = {}
+): Promise<string> {
+  const path = await resolveTranslationPathForSelectedIssue(projectDir, model, selectedIndex, filter);
   if (isResolutionMessage(path)) {
     return path;
   }
   const result = await openFile(path, options);
-  const issue = selectedOpenIssue(model, selectedIndex);
+  const issue = selectedOpenIssue(model, selectedIndex, filter);
   const metadata = await loadProjectMetadata(projectDir);
   await writeProjectLog({
     projectDir,
@@ -172,8 +231,8 @@ export async function openSelectedIssueTranslation(projectDir: string, model: Pr
   return result.opened ? result.message : `${result.message}. 바로 열려면 NOVELTRANS_EDITOR 또는 EDITOR를 설정하세요.`;
 }
 
-async function resolveTranslationPathForSelectedIssue(projectDir: string, model: ProjectUiModel, selectedIndex: number): Promise<string> {
-  const issue = selectedOpenIssue(model, selectedIndex);
+async function resolveTranslationPathForSelectedIssue(projectDir: string, model: ProjectUiModel, selectedIndex: number, filter: ReviewIssueFilter): Promise<string> {
+  const issue = selectedOpenIssue(model, selectedIndex, filter);
   if (!issue) {
     return "선택된 검수 항목이 없습니다.";
   }

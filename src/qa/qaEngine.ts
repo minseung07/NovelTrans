@@ -3,7 +3,7 @@ import type { NovelTransConfig } from "../domain/config.js";
 import type { GlossaryData, GlossaryEntry } from "../domain/glossary.js";
 import type { QAIssue, QAIssueSection } from "../domain/qa.js";
 import type { TranslationResult } from "../domain/translation.js";
-import { newId } from "../utils/hash.js";
+import { shortHash } from "../utils/hash.js";
 import { nowIso } from "../utils/time.js";
 import { extractNumbers, hasJapanese, paragraphs } from "../utils/text.js";
 
@@ -27,9 +27,11 @@ type QASegment = {
 export function runQA(episode: Episode, result: TranslationResult, glossary: GlossaryData, options: QAOptions = defaultQAOptions): QAIssue[] {
   const issues: QAIssue[] = [];
   const add = (issue: Omit<QAIssue, "id" | "episodeId" | "resolved" | "createdAt">): void => {
+    const fingerprint = issue.fingerprint ?? qaIssueFingerprint({ ...issue, episodeId: episode.id });
     issues.push({
-      id: newId("qa"),
+      id: `qa_${fingerprint}`,
       episodeId: episode.id,
+      fingerprint,
       resolved: false,
       createdAt: nowIso(),
       ...issue
@@ -51,6 +53,22 @@ export function runQA(episode: Episode, result: TranslationResult, glossary: Glo
   }
 
   return issues;
+}
+
+export function qaIssueFingerprint(issue: Pick<QAIssue, "episodeId" | "type"> & Partial<QAIssue>): string {
+  return shortHash(
+    [
+      issue.episodeId,
+      issue.type,
+      issue.section ?? "",
+      issue.sourceParagraphIndex ?? "",
+      issue.targetParagraphIndex ?? "",
+      normalizeFingerprintText(issue.sourceSnippet),
+      normalizeFingerprintText(issue.targetSnippet),
+      issue.relatedGlossaryEntryId ?? ""
+    ].join("\u001f"),
+    20
+  );
 }
 
 function buildQASegments(episode: Episode, result: TranslationResult): QASegment[] {
@@ -220,6 +238,10 @@ function applyGlossaryChecks(
 
 function snippet(value: string): string {
   return value.trim().slice(0, 120);
+}
+
+function normalizeFingerprintText(value: string | undefined): string {
+  return (value ?? "").trim().replace(/\s+/g, " ");
 }
 
 function firstParagraph(paragraphs: string[], predicate: (paragraph: string) => boolean): { index: number; text: string } | null {

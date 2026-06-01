@@ -29,22 +29,27 @@ test("F5: action-done defaults to info, errors are critical, successes are succe
   const [ok] = update(baseModel(), { type: "action-done", message: "완료", level: "success" });
   assert.equal(ok.message?.level, "success");
 
-  const running: AppModel = { ...baseModel(), route: { screen: "project", projectDir: "/p/a", stage: "translate" }, job: { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } };
-  const [failed] = update(running, { type: "job-failed", message: "실패" });
+  const running: AppModel = {
+    ...baseModel(),
+    route: { screen: "project", projectDir: "/p/a", stage: "translate" },
+    jobsByProjectDir: { "/p/a": { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } }
+  };
+  const [failed] = update(running, { type: "job-failed", projectDir: "/p/a", message: "실패" });
   assert.equal(failed.overlay?.kind === "notice" && failed.overlay.level, "critical");
 });
 
 test("Q1: shouldConfirmQuit is true only when a job is running or paused", () => {
   assert.equal(shouldConfirmQuit(baseModel()), false);
-  const running: AppModel = { ...baseModel(), job: { kind: "translate", projectDir: "/p", status: "running", queued: 1, completed: 0, failed: 0 } };
+  const running: AppModel = { ...baseModel(), jobsByProjectDir: { "/p": { kind: "translate", projectDir: "/p", status: "running", queued: 1, completed: 0, failed: 0 } } };
   assert.equal(shouldConfirmQuit(running), true);
-  assert.equal(shouldConfirmQuit({ ...running, job: { ...running.job!, status: "paused" } }), true);
-  assert.equal(shouldConfirmQuit({ ...running, job: { ...running.job!, status: "completed" } }), false);
+  assert.equal(shouldConfirmQuit({ ...running, jobsByProjectDir: { "/p": { ...running.jobsByProjectDir["/p"]!, status: "paused" } } }), true);
+  assert.equal(shouldConfirmQuit({ ...running, jobsByProjectDir: { "/p": { ...running.jobsByProjectDir["/p"]!, status: "completed" } } }), false);
+  assert.equal(shouldConfirmQuit({ ...baseModel(), importJob: { kind: "web-import", projectDir: "", status: "running", queued: 1, completed: 0, failed: 0 } }), true);
 });
 
 test("Q2: quitting while a job runs confirms; idle quits immediately; confirming exits", () => {
   const job: Job = { kind: "translate", projectDir: "/p", status: "running", queued: 1, completed: 0, failed: 0 };
-  const running: AppModel = { ...baseModel(), job };
+  const running: AppModel = { ...baseModel(), jobsByProjectDir: { "/p": job } };
   const msgs: Msg[] = [];
   let quit = false;
   onKey(running, { type: "char", value: "q" }, { dispatch: (m) => msgs.push(m), quit: () => { quit = true; } });
@@ -59,10 +64,18 @@ test("Q2: quitting while a job runs confirms; idle quits immediately; confirming
   let confirmedQuit = false;
   onKey(confirming, { type: "char", value: "y" }, { dispatch: () => {}, quit: () => { confirmedQuit = true; } });
   assert.equal(confirmedQuit, true);
+
+  let koreanKeyboardQuit = false;
+  onKey(confirming, { type: "char", value: "ㅛ" }, { dispatch: () => {}, quit: () => { koreanKeyboardQuit = true; } });
+  assert.equal(koreanKeyboardQuit, true);
 });
 
 test("F8: starting translate while a job runs gives feedback instead of a silent no-op", () => {
-  const running: AppModel = { ...baseModel(), route: { screen: "project", projectDir: "/p/a", stage: "translate" }, job: { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } };
+  const running: AppModel = {
+    ...baseModel(),
+    route: { screen: "project", projectDir: "/p/a", stage: "translate" },
+    jobsByProjectDir: { "/p/a": { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } }
+  };
   const [next, effects] = update(running, { type: "start-translate", mode: "resume" });
   assert.equal(next.message?.level, "warning");
   assert.equal(effects[0]?.kind, "dismiss");
@@ -105,10 +118,10 @@ test("F2: tick advances the spinner counter and export runs as an animated job",
 
   const exportModel: AppModel = { ...baseModel(), route: { screen: "project", projectDir: "/p/a", stage: "export" } };
   const [withJob, effects] = update(exportModel, { type: "export-generate" });
-  assert.equal(withJob.job?.kind, "export");
-  assert.equal(withJob.job?.status, "running");
+  assert.equal(withJob.jobsByProjectDir["/p/a"]?.kind, "export");
+  assert.equal(withJob.jobsByProjectDir["/p/a"]?.status, "running");
   assert.equal(effects[0]?.kind, "export");
-  assert.deepEqual(update(withJob, { type: "job-clear" })[0].job, null);
+  assert.equal(update(withJob, { type: "job-clear", projectDir: "/p/a" })[0].jobsByProjectDir["/p/a"], undefined);
 });
 
 test("F2: a running job segment shows a spinner; a settled one does not", () => {
@@ -122,19 +135,19 @@ test("F1: web import requires a consent overlay before running, then tracks prog
   assert.equal(previewed.overlay?.kind === "confirm" && previewed.overlay.action, "web-import");
 
   const [running, effects] = update(previewed, { type: "confirm-yes" });
-  assert.equal(running.job?.kind, "web-import");
+  assert.equal(running.importJob?.kind, "web-import");
   assert.equal(effects[0]?.kind, "web-import-run");
 
   const [progressed] = update(running, { type: "import-progress", completed: 2, total: 5 });
-  assert.equal(progressed.job?.completed, 2);
-  assert.equal(progressed.job?.queued, 5);
+  assert.equal(progressed.importJob?.completed, 2);
+  assert.equal(progressed.importJob?.queued, 5);
 });
 
 test("F1: cancelling the consent overlay starts no import", () => {
   const [previewed] = update(baseModel(), { type: "web-import-previewed", consent: "...\n[Y] 동의하고 가져오기   [N] 취소" });
   const [cancelled, effects] = update(previewed, { type: "close-overlay" });
   assert.equal(cancelled.overlay, null);
-  assert.equal(cancelled.job, null);
+  assert.equal(cancelled.importJob, null);
   assert.deepEqual(effects, []);
 });
 
@@ -146,7 +159,7 @@ test("F3: first dry-run translate warns once, then proceeds; acknowledged runs d
 
   const [running, fx2] = update(warned, { type: "confirm-yes" });
   assert.equal(running.dryRunAcknowledged, true);
-  assert.equal(running.job?.status, "running");
+  assert.equal(running.jobsByProjectDir["/p/a"]?.status, "running");
   assert.equal(fx2[0]?.kind, "start-job");
 
   const acked: AppModel = { ...project, dryRunAcknowledged: true };

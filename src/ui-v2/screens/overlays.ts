@@ -12,10 +12,10 @@ import { filterPaletteCommands } from "../data/palette.js";
 
 const STAGE_LEGEND = [
   "공통 · 이동 ↑↓/jk · 선택 Enter · 뒤로 Esc/b · 단계 1~6",
-  "원문 · ↑↓ 화 선택 · i 원문 다시 가져오기",
+  "원문 · ↑↓ 화 선택",
   "번역 · t 이어가기 · y 실패 재시도 · p 일시정지 · x 취소 · s 건너뛰고 내보내기",
   "용어 · c 확정 · l 고정 · f 금칙 · e 편집 · d 폐기 · a 필터",
-  "검수 · i 무시 · r 재검사 · t 재번역 · g 용어",
+  "검수 · i 무시 · r 재검사 · t 재번역 · g 용어 · a 필터",
   "내보내기 · t/e/p/v/a 토글 · g 생성",
   "설정 · b 엔진 · m 모델 · g 엄격도 · +/- 동시성 · t/e 출력 · w 마법사"
 ];

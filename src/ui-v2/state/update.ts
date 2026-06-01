@@ -5,8 +5,9 @@
 import { filterProjects } from "../data/library.js";
 import { buildGlossaryQueue, suggestedGlossaryTarget } from "../data/glossary.js";
 import { filterPaletteCommands } from "../data/palette.js";
-import { isWebImportSource, looksLikeTextPath, parseWebImportRequest } from "../../ui/actions/importActions.js";
-import type { BookshelfProject, GlossaryQueueFilter } from "../../ui/types.js";
+import { buildReviewDeskModel, filterReviewEpisodeGroups, filterReviewIssues, reviewIssueFilterOrder, selectedReviewIssue } from "../../ui/reviewDeskModel.js";
+import { isWebImportSource, parseWebImportRequest } from "../../ui/actions/importActions.js";
+import type { BookshelfProject, GlossaryQueueFilter, ProjectUiModel } from "../../ui/types.js";
 import type { NovelTransConfig } from "../../domain/config.js";
 import { clamp } from "../components/geometry.js";
 import type { AppModel, ConfirmAction, Job } from "./model.js";
@@ -18,7 +19,7 @@ export function currentList(model: AppModel): BookshelfProject[] {
 }
 
 export function shouldConfirmQuit(model: AppModel): boolean {
-  return Boolean(model.job && (model.job.status === "running" || model.job.status === "paused"));
+  return Boolean(model.importJob && isActiveJob(model.importJob)) || Object.values(model.jobsByProjectDir).some(isActiveJob);
 }
 
 export function needsSetup(config: NovelTransConfig, hasApiKey: boolean): boolean {
@@ -28,8 +29,125 @@ export function needsSetup(config: NovelTransConfig, hasApiKey: boolean): boolea
   return config.defaultBackend === "dry-run";
 }
 
-function jobFromSnapshot(job: Job | null, snapshot: { status: Job["status"]; queued: number; completed: number; failed: number }): Job | null {
-  return job ? { ...job, status: snapshot.status, queued: snapshot.queued, completed: snapshot.completed, failed: snapshot.failed } : job;
+function isActiveJob(job: Job): boolean {
+  return job.status === "running" || job.status === "paused";
+}
+
+function currentProjectJob(model: AppModel): Job | null {
+  return model.route.screen === "project" ? (model.jobsByProjectDir[model.route.projectDir] ?? null) : null;
+}
+
+function jobFromSnapshot(
+  job: Job | undefined,
+  snapshot: { status: Job["status"]; queued: number; completed: number; failed: number; currentEpisodeTitle?: string | null; activeEpisodeTitles?: string[] }
+): Job | null {
+  if (!job) {
+    return null;
+  }
+  const current = snapshot.currentEpisodeTitle ?? snapshot.activeEpisodeTitles?.[0] ?? null;
+  return { ...job, status: snapshot.status, queued: snapshot.queued, completed: snapshot.completed, failed: snapshot.failed, current };
+}
+
+function withProjectJob(model: AppModel, job: Job): AppModel {
+  return { ...model, jobsByProjectDir: { ...model.jobsByProjectDir, [job.projectDir]: job } };
+}
+
+function withoutProjectJob(model: AppModel, projectDir: string): AppModel {
+  const { [projectDir]: _removed, ...jobsByProjectDir } = model.jobsByProjectDir;
+  return { ...model, jobsByProjectDir };
+}
+
+function currentProjectBusy(model: AppModel): boolean {
+  const job = currentProjectJob(model);
+  return Boolean(job && isActiveJob(job));
+}
+
+function activeQaEpisodeIds(job: Job | null): string[] {
+  return job && isActiveJob(job) && (job.kind === "qa-retranslate" || job.kind === "qa-batch-retranslate") ? (job.episodeIds ?? []) : [];
+}
+
+function withoutQaEpisodes(project: ProjectUiModel, episodeIds: string[]): ProjectUiModel {
+  if (episodeIds.length === 0) {
+    return project;
+  }
+  const hidden = new Set(episodeIds);
+  const qaIssues = project.qaIssues.filter((issue) => !hidden.has(issue.episodeId));
+  return { ...project, qaIssues, reviewDesk: buildReviewDeskModel(qaIssues, project.episodes) };
+}
+
+function currentVisibleQaProject(model: AppModel): ProjectUiModel | null {
+  if (model.route.screen !== "project" || !model.project) {
+    return null;
+  }
+  return withoutQaEpisodes(model.project, activeQaEpisodeIds(currentProjectJob(model)));
+}
+
+function setupRequiredModel(model: AppModel): AppModel | null {
+  return model.config.defaultBackend === "openai-compatible" && !model.hasApiKey
+    ? { ...model, overlay: { kind: "setup", step: "credentials", validation: { state: "idle", message: "" } } }
+    : null;
+}
+
+function episodeLabel(project: NonNullable<AppModel["project"]>, episodeId: string): string {
+  const episode = project.episodes.find((item) => item.id === episodeId);
+  if (!episode) {
+    return episodeId;
+  }
+  return `${episode.episodeNo}화 ${episode.title}`;
+}
+
+function startQaRetranslate(model: AppModel): [AppModel, Effect[]] {
+  if (model.route.screen !== "project" || !model.project) {
+    return [model, []];
+  }
+  if (currentProjectBusy(model)) {
+    return [{ ...model, message: { text: "이 프로젝트에서 다른 작업이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+  }
+  const setup = setupRequiredModel(model);
+  if (setup) {
+    return [setup, []];
+  }
+  const project = currentVisibleQaProject(model) ?? model.project;
+  const issue = selectedReviewIssue(project.reviewDesk, model.qaSelected, model.qaFilter);
+  if (!issue) {
+    return [{ ...model, message: { text: "선택된 검수 항목이 없습니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+  }
+  const label = episodeLabel(project, issue.episodeId);
+  const job: Job = { kind: "qa-retranslate", projectDir: model.route.projectDir, status: "running", queued: 1, completed: 0, failed: 0, label, current: label, episodeIds: [issue.episodeId] };
+  return [
+    { ...withProjectJob(model, job), message: { text: `재번역을 시작했습니다: ${label}`, level: "info" } },
+    [{ kind: "qa-action", op: "retranslate", projectDir: model.route.projectDir, model: project, selectedIndex: model.qaSelected, filter: model.qaFilter }, { kind: "dismiss" }]
+  ];
+}
+
+function startQaBatchRetranslate(model: AppModel, scope: "all-open" | "same-type"): [AppModel, Effect[]] {
+  if (model.route.screen !== "project" || !model.project) {
+    return [model, []];
+  }
+  if (currentProjectBusy(model)) {
+    return [{ ...model, message: { text: "이 프로젝트에서 다른 작업이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+  }
+  const setup = setupRequiredModel(model);
+  if (setup) {
+    return [setup, []];
+  }
+  const project = currentVisibleQaProject(model) ?? model.project;
+  const selected = selectedReviewIssue(project.reviewDesk, model.qaSelected, model.qaFilter);
+  if (!selected) {
+    return [{ ...model, message: { text: "선택된 검수 항목이 없습니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+  }
+  const openIssues = filterReviewIssues(project.reviewDesk.openIssues, model.qaFilter);
+  const issues = scope === "same-type" ? openIssues.filter((issue) => issue.type === selected.type) : openIssues;
+  const episodeIds = Array.from(new Set(issues.map((issue) => issue.episodeId)));
+  if (episodeIds.length === 0) {
+    return [{ ...model, message: { text: "재번역할 검수 화가 없습니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+  }
+  const label = scope === "same-type" ? `같은 유형 ${episodeIds.length}개 에피소드` : `${episodeIds.length}개 에피소드`;
+  const job: Job = { kind: "qa-batch-retranslate", projectDir: model.route.projectDir, status: "running", queued: episodeIds.length, completed: 0, failed: 0, label, episodeIds };
+  return [
+    { ...withProjectJob(model, job), message: { text: `재번역을 시작했습니다: ${label}`, level: "info" } },
+    [{ kind: "qa-batch-action", scope, projectDir: model.route.projectDir, model: project, selectedIndex: model.qaSelected, filter: model.qaFilter }, { kind: "dismiss" }]
+  ];
 }
 
 function moveSelection(model: AppModel, delta: number): AppModel {
@@ -47,18 +165,66 @@ function moveSelection(model: AppModel, delta: number): AppModel {
       return length === 0 ? model : { ...model, glossarySelected: clamp(model.glossarySelected + delta, 0, length - 1) };
     }
     if (model.route.stage === "qa") {
-      const length = model.project.reviewDesk.openIssues.length;
+      const project = currentVisibleQaProject(model) ?? model.project;
+      const length = filterReviewEpisodeGroups(project.reviewDesk, model.qaFilter).length;
       return length === 0 ? model : { ...model, qaSelected: clamp(model.qaSelected + delta, 0, length - 1) };
     }
   }
   return model;
 }
 
-function glossaryEffect(model: AppModel, op: "confirm" | "lock" | "forbid" | "discard", target: string | null): Effect[] {
-  if (model.route.screen !== "project" || !model.project) {
-    return [];
+type GlossaryOp = "confirm" | "lock" | "forbid" | "discard";
+
+function glossaryDoneMessage(op: GlossaryOp, source: string, target: string | null): string {
+  if (op === "lock") {
+    return `용어를 고정했습니다: ${source} -> ${target ?? ""}`;
   }
-  return [{ kind: "glossary-action", op, projectDir: model.route.projectDir, model: model.project, selectedIndex: model.glossarySelected, filter: model.glossaryFilter, deferred: model.deferred, target }];
+  if (op === "forbid") {
+    return `금지 번역을 저장했습니다: ${source} !-> ${target ?? ""}`;
+  }
+  if (op === "discard") {
+    return `후보 용어를 폐기했습니다: ${source}`;
+  }
+  return `용어를 확정했습니다: ${source} -> ${target ?? ""}`;
+}
+
+function startGlossaryAction(model: AppModel, op: GlossaryOp, targetOverride?: string | null): [AppModel, Effect[]] {
+  if (model.route.screen !== "project" || !model.project) {
+    return [model, []];
+  }
+  const queue = buildGlossaryQueue(model.project, model.glossaryFilter, model.deferred);
+  const selectedIndex = queue[model.glossarySelected] ? model.glossarySelected : 0;
+  const selected = queue[selectedIndex];
+  if (!selected) {
+    return [{ ...model, input: null, message: { text: "선택된 용어가 없습니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+  }
+  const target = op === "discard" ? null : (targetOverride ?? suggestedGlossaryTarget(model.project, selectedIndex, model.glossaryFilter, model.deferred) ?? "");
+  const deferred = model.deferred.includes(selected.entry.id) ? model.deferred : [...model.deferred, selected.entry.id];
+  const remaining = buildGlossaryQueue(model.project, model.glossaryFilter, deferred).length;
+  const glossarySelected = remaining === 0 ? 0 : clamp(model.glossarySelected, 0, remaining - 1);
+  return [
+    {
+      ...model,
+      input: null,
+      deferred,
+      glossarySelected,
+      message: { text: glossaryDoneMessage(op, selected.entry.source, target), level: "success" }
+    },
+    [
+      {
+        kind: "glossary-action",
+        op,
+        projectDir: model.route.projectDir,
+        model: model.project,
+        selectedIndex,
+        filter: model.glossaryFilter,
+        deferred: model.deferred,
+        target,
+        entryId: selected.entry.id
+      },
+      { kind: "dismiss" }
+    ]
+  ];
 }
 
 type PaletteMapping = Msg | Effect | { confirm: ConfirmAction } | null;
@@ -138,7 +304,7 @@ function paletteMapping(model: AppModel, id: string): PaletteMapping {
     case "rerun-qa":
       return { type: "qa-op", op: "recheck" };
     case "review-open-translation":
-      return projectModelEffect(model, (projectDir, project) => ({ kind: "review-open-translation", projectDir, model: project, selectedIndex: model.qaSelected }));
+      return projectModelEffect(model, (projectDir, project) => ({ kind: "review-open-translation", projectDir, model: currentVisibleQaProject(model) ?? project, selectedIndex: model.qaSelected, filter: model.qaFilter }));
     case "review-ignore-issue":
       return { confirm: "review-ignore" };
     case "review-retranslate-issue":
@@ -185,11 +351,12 @@ function paletteMapping(model: AppModel, id: string): PaletteMapping {
 }
 
 function startExport(model: AppModel, projectDir: string, mode: "configured" | "all"): [AppModel, Effect[]] {
-  if (model.job && (model.job.status === "running" || model.job.status === "paused")) {
-    return [{ ...model, overlay: null, message: { text: "다른 작업이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+  const current = model.jobsByProjectDir[projectDir];
+  if (current && isActiveJob(current)) {
+    return [{ ...model, overlay: null, message: { text: "이 프로젝트에서 다른 작업이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
   }
   const job: Job = { kind: "export", projectDir, status: "running", queued: 0, completed: 0, failed: 0 };
-  return [{ ...model, overlay: null, job }, [{ kind: "export", projectDir, mode }]];
+  return [{ ...withProjectJob(model, job), overlay: null }, [{ kind: "export", projectDir, mode }]];
 }
 
 function runConfirm(model: AppModel): [AppModel, Effect[]] {
@@ -202,13 +369,19 @@ function runConfirm(model: AppModel): [AppModel, Effect[]] {
     return [cleared, []];
   }
   if (action === "web-import") {
+    if (model.importJob && isActiveJob(model.importJob)) {
+      return [{ ...cleared, message: { text: "웹 가져오기가 이미 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+    }
     const job: Job = { kind: "web-import", projectDir: "", status: "running", queued: 0, completed: 0, failed: 0 };
-    return [{ ...cleared, job }, [{ kind: "web-import-run" }]];
+    return [{ ...cleared, importJob: job }, [{ kind: "web-import-run" }]];
   }
   if (model.route.screen !== "project") {
     return [cleared, []];
   }
   if (action === "skip-export") {
+    if (currentProjectBusy(model)) {
+      return [{ ...cleared, message: { text: "이 프로젝트에서 다른 작업이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+    }
     return [cleared, [{ kind: "skip-export", projectDir: model.route.projectDir }]];
   }
   if (action === "export-all") {
@@ -216,9 +389,6 @@ function runConfirm(model: AppModel): [AppModel, Effect[]] {
   }
   if (action === "export-configured") {
     return startExport(model, model.route.projectDir, "configured");
-  }
-  if (action === "source-reimport") {
-    return [cleared, model.project ? [{ kind: "import", source: model.project.sourceStatus.sourcePath }] : []];
   }
   if (action === "retry-failed") {
     return update(cleared, { type: "start-translate", mode: "retry-failed" });
@@ -232,21 +402,7 @@ function runConfirm(model: AppModel): [AppModel, Effect[]] {
   if (action === "review-retranslate") {
     return update(cleared, { type: "qa-op", op: "retranslate" });
   }
-  if (!model.project) {
-    return [cleared, []];
-  }
-  return [
-    cleared,
-    [
-      {
-        kind: "qa-batch-action",
-        scope: action === "review-retranslate-same-type" ? "same-type" : "all-open",
-        projectDir: model.route.projectDir,
-        model: model.project,
-        selectedIndex: model.qaSelected
-      }
-    ]
-  ];
+  return startQaBatchRetranslate(cleared, action === "review-retranslate-same-type" ? "same-type" : "all-open");
 }
 
 export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
@@ -275,8 +431,10 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
       if (model.route.screen !== "project") {
         return [model, []];
       }
-      if (model.job && (model.job.status === "running" || model.job.status === "paused")) {
-        return [{ ...model, message: { text: "이미 번역이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+      const { projectDir } = model.route;
+      const current = model.jobsByProjectDir[projectDir];
+      if (current && isActiveJob(current)) {
+        return [{ ...model, message: { text: "이 프로젝트에서 이미 작업이 진행 중입니다.", level: "warning" } }, [{ kind: "dismiss" }]];
       }
       if (model.config.defaultBackend === "openai-compatible" && !model.hasApiKey) {
         return [{ ...model, overlay: { kind: "setup", step: "credentials", validation: { state: "idle", message: "" } } }, []];
@@ -284,16 +442,19 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
       if (model.config.defaultBackend === "dry-run" && !model.dryRunAcknowledged) {
         return [{ ...model, overlay: { kind: "confirm", message: "dry-run 백엔드는 실제 번역이 아니라 자리표시자 텍스트를 만듭니다. 계속할까요? (설정에서 엔진을 바꿀 수 있습니다)", action: msg.mode === "retry-failed" ? "dry-run-retry" : "dry-run-resume" } }, []];
       }
-      const { projectDir } = model.route;
       const job: Job = { kind: msg.mode === "retry-failed" ? "retry" : "translate", projectDir, status: "running", queued: 0, completed: 0, failed: 0 };
-      return [{ ...model, job }, [{ kind: "start-job", projectDir, mode: msg.mode }]];
+      return [withProjectJob(model, job), [{ kind: "start-job", projectDir, mode: msg.mode }]];
     }
-    case "translate-pause":
-      return model.job ? [model, [{ kind: model.job.status === "paused" ? "resume-job" : "pause-job" }]] : [model, []];
-    case "translate-cancel":
-      return model.job && (model.job.status === "running" || model.job.status === "paused")
-        ? [{ ...model, job: { ...model.job, status: "cancelled" } }, [{ kind: "cancel-job" }]]
+    case "translate-pause": {
+      const job = currentProjectJob(model);
+      return job && (job.kind === "translate" || job.kind === "retry") ? [model, [{ kind: job.status === "paused" ? "resume-job" : "pause-job", projectDir: job.projectDir }]] : [model, []];
+    }
+    case "translate-cancel": {
+      const job = currentProjectJob(model);
+      return job && (job.kind === "translate" || job.kind === "retry" || job.kind === "qa-retranslate" || job.kind === "qa-batch-retranslate") && isActiveJob(job)
+        ? [withProjectJob(model, { ...job, status: "cancelled" }), [{ kind: "cancel-job", projectDir: job.projectDir }]]
         : [model, []];
+    }
     case "export-toggle":
       return model.route.screen === "project" ? [model, [{ kind: "export-toggle", projectDir: model.route.projectDir, what: msg.what }]] : [model, []];
     case "export-generate":
@@ -305,13 +466,12 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
         ? [{ ...model, input: { kind: "api-key", label: "OpenAI 호환 API 키", value: "", mask: true } }, []]
         : [{ ...model, input: { kind: "base-url", label: "API base URL (https://...)", value: model.config.openAICompatible.baseUrl } }, []];
     case "glossary-filter": {
-      const order: GlossaryQueueFilter[] = ["all", "conflicts", "candidates"];
+      const order: GlossaryQueueFilter[] = ["all", "conflicts", "candidates", "confirmed"];
       const next = order[(order.indexOf(model.glossaryFilter) + 1) % order.length]!;
       return [{ ...model, glossaryFilter: next, glossarySelected: 0 }, []];
     }
     case "glossary-op": {
-      const target = msg.op === "discard" || model.route.screen !== "project" || !model.project ? null : suggestedGlossaryTarget(model.project, model.glossarySelected, model.glossaryFilter, model.deferred);
-      return [model, glossaryEffect(model, msg.op, target)];
+      return startGlossaryAction(model, msg.op);
     }
     case "glossary-edit-open": {
       if (model.route.screen !== "project" || !model.project) {
@@ -321,20 +481,19 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
       return [{ ...model, input: { kind: "glossary-edit", label: "번역 입력", value: suggested } }, []];
     }
     case "qa-op":
-      return model.route.screen === "project" && model.project
-        ? [model, [{ kind: "qa-action", op: msg.op, projectDir: model.route.projectDir, model: model.project, selectedIndex: model.qaSelected }]]
-        : [model, []];
-    case "qa-jump-glossary":
-      return model.route.screen === "project" ? [{ ...model, route: { ...model.route, stage: "glossary" }, message: null }, []] : [model, []];
-    case "source-reimport": {
       if (model.route.screen !== "project" || !model.project) {
         return [model, []];
       }
-      if (!looksLikeTextPath(model.project.sourceStatus.sourcePath)) {
-        return [{ ...model, message: { text: "원문 다시 가져오기는 로컬 TXT 원본에만 지원됩니다.", level: "warning" } }, [{ kind: "dismiss" }]];
+      if (msg.op === "retranslate") {
+        return startQaRetranslate(model);
       }
-      return [{ ...model, overlay: { kind: "confirm", message: "현재 원문 파일로 새 프로젝트를 다시 만들까요?", action: "source-reimport" } }, []];
+      return [model, [{ kind: "qa-action", op: msg.op, projectDir: model.route.projectDir, model: currentVisibleQaProject(model) ?? model.project, selectedIndex: model.qaSelected, filter: model.qaFilter }]];
+    case "qa-filter": {
+      const next = reviewIssueFilterOrder[(reviewIssueFilterOrder.indexOf(model.qaFilter) + 1) % reviewIssueFilterOrder.length]!;
+      return [{ ...model, qaFilter: next, qaSelected: 0 }, []];
     }
+    case "qa-jump-glossary":
+      return model.route.screen === "project" ? [{ ...model, route: { ...model.route, stage: "glossary" }, message: null }, []] : [model, []];
     case "import-open":
       return [{ ...model, input: { kind: "import", label: "원문 경로, URL 또는 붙여넣기", value: "" } }, []];
     case "input-char":
@@ -370,7 +529,7 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
           : [{ ...model, input: null, message: { text: "base URL은 https:// 로 시작해야 합니다.", level: "warning" } }, [{ kind: "dismiss" }]];
       }
       const target = model.input.value;
-      return [{ ...model, input: null }, glossaryEffect(model, "confirm", target)];
+      return startGlossaryAction({ ...model, input: null }, "confirm", target);
     }
     case "open-overlay":
       return [{ ...model, overlay: msg.overlay }, []];
@@ -441,26 +600,49 @@ export function update(model: AppModel, msg: Msg): [AppModel, Effect[]] {
         ? [{ ...model, overlay: { kind: "notice", message: msg.message, level } }, []]
         : [{ ...model, message: { text: msg.message, level } }, [{ kind: "dismiss" }]];
     }
+    case "glossary-action-failed":
+      return [
+        {
+          ...model,
+          deferred: model.deferred.filter((entryId) => entryId !== msg.entryId),
+          overlay: { kind: "notice", message: msg.message, level: "critical" }
+        },
+        []
+      ];
     case "clear-message":
       return [{ ...model, message: null }, []];
     case "job-clear":
-      return [{ ...model, job: null }, []];
+      return [withoutProjectJob(model, msg.projectDir), []];
     case "web-import-previewed":
       return [{ ...model, overlay: { kind: "confirm", message: msg.consent, action: "web-import" }, message: null }, []];
     case "import-progress":
-      return [{ ...model, job: model.job ? { ...model.job, queued: msg.total, completed: msg.completed } : model.job }, []];
+      return [{ ...model, importJob: model.importJob ? { ...model.importJob, queued: msg.total, completed: msg.completed } : model.importJob }, []];
+    case "import-job-clear":
+      return [{ ...model, importJob: null }, []];
     case "tick":
       return [{ ...model, tick: model.tick + 1 }, []];
-    case "job-progress":
-      return [{ ...model, job: jobFromSnapshot(model.job, msg.snapshot) }, []];
+    case "job-progress": {
+      const job = jobFromSnapshot(model.jobsByProjectDir[msg.projectDir], msg.snapshot);
+      return job ? [{ ...model, jobsByProjectDir: { ...model.jobsByProjectDir, [msg.projectDir]: job } }, []] : [model, []];
+    }
     case "job-done": {
-      const job = jobFromSnapshot(model.job, msg.snapshot);
-      const effects: Effect[] = model.route.screen === "project" ? [{ kind: "load-project", projectDir: model.route.projectDir }, { kind: "load-library" }] : [{ kind: "load-library" }];
-      return [{ ...model, job, libraryLoading: true }, effects];
+      const job = jobFromSnapshot(model.jobsByProjectDir[msg.projectDir], msg.snapshot);
+      const effects: Effect[] =
+        model.route.screen === "project" && model.route.projectDir === msg.projectDir ? [{ kind: "load-project", projectDir: msg.projectDir }, { kind: "load-library" }] : [{ kind: "load-library" }];
+      return [job ? { ...model, jobsByProjectDir: { ...model.jobsByProjectDir, [msg.projectDir]: job }, libraryLoading: true } : { ...model, libraryLoading: true }, effects];
     }
     case "job-failed": {
-      const effects: Effect[] = model.route.screen === "project" ? [{ kind: "load-project", projectDir: model.route.projectDir }, { kind: "load-library" }] : [{ kind: "load-library" }];
-      return [{ ...model, job: model.job ? { ...model.job, status: "failed" } : model.job, overlay: { kind: "notice", message: msg.message, level: "critical" } }, effects];
+      const job = model.jobsByProjectDir[msg.projectDir];
+      const effects: Effect[] =
+        model.route.screen === "project" && model.route.projectDir === msg.projectDir ? [{ kind: "load-project", projectDir: msg.projectDir }, { kind: "load-library" }] : [{ kind: "load-library" }];
+      return [
+        {
+          ...model,
+          jobsByProjectDir: job ? { ...model.jobsByProjectDir, [msg.projectDir]: { ...job, status: "failed" } } : model.jobsByProjectDir,
+          overlay: { kind: "notice", message: msg.message, level: "critical" }
+        },
+        effects
+      ];
     }
     case "start-search":
       return [{ ...model, searching: true }, []];

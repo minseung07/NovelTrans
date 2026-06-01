@@ -1,7 +1,7 @@
 // Frontend v2 entry point. Loads the bookshelf, then drives the MVU with
 // effects. Composes breadcrumb + screen/overlay body + message + status bar into
 // a frame, with context-aware input (input modal, overlays, search mode, stage
-// keys, keymap). The global job stays visible in the status bar.
+// keys, keymap). Project jobs are shown only inside their project workspace.
 
 import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 import type { ReadStream, WriteStream } from "node:tty";
@@ -30,7 +30,6 @@ import { createEffectRunner, type Effect } from "./state/effects.js";
 import { contextHints, keyToken, resolveAction } from "./state/keymap.js";
 import { renderLibrary } from "./screens/library.js";
 import { renderProject, projectOf, STAGE_LABELS, STAGE_ORDER } from "./screens/project/index.js";
-import { jobSegment } from "./screens/project/overview.js";
 import { renderHelp, renderSettings, renderPalette, renderSetup } from "./screens/overlays.js";
 
 interface UiV2Options {
@@ -47,9 +46,8 @@ function contentWidth(size: TerminalSize): number {
 
 function statusParts(model: AppModel): string[] {
   const meta = [`백엔드 ${model.config.defaultBackend}`, `모델 ${model.config.defaultModel}`, `동시 ${model.config.concurrency}`];
-  const job = model.job ? [jobSegment(model.job, model.tick)] : [];
   const refresh = model.libraryLoading ? ["책장 새로고침 중…"] : [];
-  return [...meta, ...job, ...refresh, ...contextHints(model.route.screen)];
+  return [...meta, ...refresh, ...contextHints(model.route.screen)];
 }
 
 function renderOverlay(model: AppModel, width: number): string[] {
@@ -126,7 +124,7 @@ function handleGlossaryKey(token: string, dispatch: Dispatch<Msg>): boolean {
 }
 
 function handleQaKey(token: string, dispatch: Dispatch<Msg>): boolean {
-  const ops: Record<string, Msg> = { i: { type: "qa-op", op: "ignore" }, r: { type: "qa-op", op: "recheck" }, t: { type: "qa-op", op: "retranslate" }, g: { type: "qa-jump-glossary" } };
+  const ops: Record<string, Msg> = { i: { type: "qa-op", op: "ignore" }, r: { type: "qa-op", op: "recheck" }, t: { type: "qa-op", op: "retranslate" }, g: { type: "qa-jump-glossary" }, a: { type: "qa-filter" } };
   if (token === "up" || token === "k") {
     dispatch({ type: "move", delta: -1 });
     return true;
@@ -173,10 +171,6 @@ function handleSourceKey(token: string, dispatch: Dispatch<Msg>): boolean {
   }
   if (token === "down" || token === "j") {
     dispatch({ type: "move", delta: 1 });
-    return true;
-  }
-  if (token === "i") {
-    dispatch({ type: "source-reimport" });
     return true;
   }
   return false;
@@ -327,7 +321,7 @@ export function onKey(model: AppModel, event: KeyEvent, ctx: KeyContext<Msg>): v
   switch (resolveAction(model.route.screen, token)) {
     case "quit":
       if (shouldConfirmQuit(model)) {
-        dispatch({ type: "open-overlay", overlay: { kind: "confirm", message: "번역 작업이 진행 중입니다. 종료하면 취소됩니다. 종료할까요?", action: "quit" } });
+        dispatch({ type: "open-overlay", overlay: { kind: "confirm", message: "작업이 진행 중입니다. 종료하면 취소됩니다. 종료할까요?", action: "quit" } });
       } else {
         quit();
       }

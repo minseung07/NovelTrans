@@ -9,7 +9,7 @@ import type { TranslatorAdapter } from "../domain/translation.js";
 import { analyzeSource } from "./sourceAnalyzer.js";
 import { splitEpisodes } from "./episodeSplitter.js";
 import { createEmptyGlossary, extractGlossaryCandidates } from "../glossary/glossaryEngine.js";
-import { runQA } from "../qa/qaEngine.js";
+import { qaIssueFingerprint, runQA } from "../qa/qaEngine.js";
 import {
   createProjectDirectories,
   loadGlossary,
@@ -209,6 +209,7 @@ export async function rerunProjectQA(
   const episodes = await listEpisodes(projectDir);
   const glossary = await loadGlossary(projectDir);
   const effectiveQAOptions = qaOptions ?? metadata.options.qa;
+  const previousByFingerprint = new Map((await readAllQAIssues(projectDir)).map((issue) => [issue.fingerprint ?? qaIssueFingerprint(issue), issue]));
   const allIssues: QAIssue[] = [];
   for (const [index, episode] of episodes.entries()) {
     onProgress?.({ completed: index, total: episodes.length, episodeTitle: episode.title });
@@ -218,13 +219,30 @@ export async function rerunProjectQA(
       onProgress?.({ completed: index + 1, total: episodes.length, episodeTitle: episode.title });
       continue;
     }
-    const issues = runQA(episode, result, glossary, effectiveQAOptions);
+    const issues = preserveResolvedQAIssues(runQA(episode, result, glossary, effectiveQAOptions), previousByFingerprint);
     await saveQAIssues(projectDir, episode, issues);
     allIssues.push(...issues);
     onProgress?.({ completed: index + 1, total: episodes.length, episodeTitle: episode.title });
   }
   await writeQualityReport(projectDir, allIssues);
   return allIssues;
+}
+
+function preserveResolvedQAIssues(issues: QAIssue[], previousByFingerprint: Map<string, QAIssue>): QAIssue[] {
+  return issues.map((issue) => {
+    const fingerprint = issue.fingerprint ?? qaIssueFingerprint(issue);
+    const previous = previousByFingerprint.get(fingerprint);
+    if (!previous) {
+      return { ...issue, fingerprint };
+    }
+    return {
+      ...issue,
+      id: previous.id || issue.id,
+      fingerprint,
+      resolved: previous.resolved,
+      createdAt: previous.createdAt || issue.createdAt
+    };
+  });
 }
 
 async function uniqueProjectSlug(projectRoot: string, baseSlug: string): Promise<string> {

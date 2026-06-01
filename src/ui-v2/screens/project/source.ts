@@ -1,5 +1,5 @@
 // Source stage: imported-source overview + episode list with a per-episode
-// preview. The only mutating action is re-import (i), confirmed before running.
+// preview.
 
 import type { Episode } from "../../../domain/episode.js";
 import type { ProjectUiModel, SourceStatus } from "../../../ui/types.js";
@@ -44,7 +44,7 @@ function previewLines(episode: Episode): string[] {
 export function renderSource(project: ProjectUiModel, selected: number, width: number): string[] {
   const { episodes, sourceStatus } = project;
   if (episodes.length === 0) {
-    return columns("에피소드", ["에피소드가 없습니다.", "", "[i]원문 다시 가져오기"], "원문 정보", statusLines(sourceStatus), width);
+    return columns("에피소드", ["에피소드가 없습니다."], "원문 정보", statusLines(sourceStatus), width);
   }
   const selectedIndex = clamp(selected, 0, episodes.length - 1);
   const window = visibleWindow(episodes, selectedIndex, LIMIT);
@@ -54,7 +54,7 @@ export function renderSource(project: ProjectUiModel, selected: number, width: n
     ...window.items.map((episode, index) => selectionRow(`${episode.episodeNo}화  ${episode.title}`, index === window.selectedOffset)),
     ...(window.hiddenAfter > 0 ? [`↓ 아래 ${window.hiddenAfter}개`] : []),
     "",
-    "[↑↓]선택 [i]원문 다시 가져오기"
+    "[↑↓]선택"
   ];
   const rightLines = [...statusLines(sourceStatus), "", "─ 선택 미리보기 ─", ...previewLines(episodes[selectedIndex]!)];
   return columns("에피소드", listLines, "원문 정보", rightLines, width);

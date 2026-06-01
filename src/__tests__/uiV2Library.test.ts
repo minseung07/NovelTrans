@@ -51,6 +51,11 @@ test("keymap has no conflicting bindings", () => {
 test("keyToken and resolveAction map events to actions", () => {
   assert.equal(resolveAction("library", keyToken({ type: "key", name: "enter" })), "open");
   assert.equal(resolveAction("library", keyToken({ type: "char", value: "n" })), "import");
+  assert.equal(resolveAction("library", keyToken({ type: "char", value: "ㅜ" })), "import");
+  assert.equal(resolveAction("library", keyToken({ type: "char", value: "ㅏ" })), "move-up");
+  assert.equal(resolveAction("library", keyToken({ type: "char", value: "ㅓ" })), "move-down");
+  assert.equal(resolveAction("library", keyToken({ type: "paste", text: "ㅜ" })), "import");
+  assert.equal(resolveAction("library", keyToken({ type: "paste", text: "n" })), null);
   assert.equal(resolveAction("library", keyToken({ type: "char", value: "C", ctrl: true })), "quit");
   assert.equal(resolveAction("project", keyToken({ type: "key", name: "escape" })), "back");
 });
@@ -58,6 +63,7 @@ test("keyToken and resolveAction map events to actions", () => {
 test("library Esc no longer quits; q and Ctrl+C still do", () => {
   assert.equal(resolveAction("library", keyToken({ type: "key", name: "escape" })), null);
   assert.equal(resolveAction("library", keyToken({ type: "char", value: "q" })), "quit");
+  assert.equal(resolveAction("library", keyToken({ type: "char", value: "ㅂ" })), "quit");
   assert.equal(resolveAction("library", keyToken({ type: "char", value: "C", ctrl: true })), "quit");
 });
 

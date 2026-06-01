@@ -60,7 +60,7 @@ export async function loadProjectUiModel(projectDir: string): Promise<ProjectUiM
     sourceStatus: buildSourceStatus(overview.metadata, episodes, sourceAnalysis),
     studioQueue: buildStudioQueue(overview),
     timeline: buildProjectTimeline(liveEvents),
-    reviewDesk: buildReviewDeskModel(qaIssues),
+    reviewDesk: buildReviewDeskModel(qaIssues, episodes),
     liveEvents,
     exportPreview: await buildExportPreview(projectDir, overview.metadata.name, episodes.length, glossaryAppendixEntries(glossary.entries).length)
   };

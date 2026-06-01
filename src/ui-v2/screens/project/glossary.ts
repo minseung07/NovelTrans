@@ -13,7 +13,7 @@ import { progressLine } from "../../components/progress.js";
 const LIMIT = 10;
 
 function filterLabel(filter: GlossaryQueueFilter): string {
-  return filter === "conflicts" ? "충돌만" : filter === "candidates" ? "후보만" : "전체";
+  return filter === "conflicts" ? "충돌만" : filter === "candidates" ? "후보만" : filter === "confirmed" ? "확정만" : "전체";
 }
 
 function labelSeverity(label: string): Severity {
@@ -31,12 +31,11 @@ function confidence(entry: GlossaryEntry): number {
 function detailLines(entry: GlossaryEntry): string[] {
   const lines = [
     `원문: ${entry.source}`,
-    `상태: ${entry.status}${entry.locked ? " (고정)" : ""}`,
     `등장: ${entry.occurrenceCount}회`,
     `번역: ${entry.target ?? "(미확정)"}`,
     `신뢰도 ${progressLine(confidence(entry), 10)}`,
     "",
-    "번역 후보:",
+    "후보 제안:",
     ...(entry.targetCandidates.length > 0 ? entry.targetCandidates.slice(0, 5).map((candidate, index) => `${index + 1}. ${candidate.target}  ${candidate.count}회`) : ["(없음)"])
   ];
   if (entry.forbiddenTargets.length > 0) {

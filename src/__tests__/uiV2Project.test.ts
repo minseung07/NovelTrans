@@ -85,23 +85,28 @@ test("go-stage switches the active stage; back returns to library", () => {
 
 test("start-translate begins a job once; progress persists across stages", () => {
   let [state, effects] = update(update(model(), { type: "open-selected" })[0], { type: "start-translate", mode: "resume" });
-  assert.equal(state.job?.status, "running");
+  assert.equal(state.jobsByProjectDir["/projects/알파"]?.status, "running");
   assert.deepEqual(effects, [{ kind: "start-job", projectDir: "/projects/알파", mode: "resume" }]);
   // A second start while running gives feedback (dismiss) instead of a new job.
   [state, effects] = update(state, { type: "start-translate", mode: "resume" });
   assert.deepEqual(effects, [{ kind: "dismiss" }]);
   assert.equal(state.message?.level, "warning");
+  [state, effects] = update({ ...state, route: { screen: "project", projectDir: "/projects/베타", stage: "translate" } }, { type: "start-translate", mode: "resume" });
+  assert.deepEqual(effects, [{ kind: "start-job", projectDir: "/projects/베타", mode: "resume" }]);
+  assert.equal(state.jobsByProjectDir["/projects/알파"]?.status, "running");
+  assert.equal(state.jobsByProjectDir["/projects/베타"]?.status, "running");
   // Progress updates the job, and it survives a stage switch.
-  [state] = update(state, { type: "job-progress", snapshot: snapshot({ completed: 3 }) });
-  assert.equal(state.job?.completed, 3);
+  [state] = update(state, { type: "job-progress", projectDir: "/projects/알파", snapshot: snapshot({ completed: 3 }) });
+  assert.equal(state.jobsByProjectDir["/projects/알파"]?.completed, 3);
+  assert.equal(state.jobsByProjectDir["/projects/베타"]?.completed, 0);
   [state] = update(state, { type: "go-stage", stage: "qa" });
-  assert.equal(state.job?.completed, 3);
+  assert.equal(state.jobsByProjectDir["/projects/알파"]?.completed, 3);
 });
 
 test("job-done updates status and refreshes the open project", () => {
   let [state] = update(update(model(), { type: "open-selected" })[0], { type: "start-translate", mode: "resume" });
-  const [next, effects] = update(state, { type: "job-done", snapshot: snapshot({ status: "completed", completed: 4 }) });
-  assert.equal(next.job?.status, "completed");
+  const [next, effects] = update(state, { type: "job-done", projectDir: "/projects/알파", snapshot: snapshot({ status: "completed", completed: 4 }) });
+  assert.equal(next.jobsByProjectDir["/projects/알파"]?.status, "completed");
   assert.deepEqual(effects, [{ kind: "load-project", projectDir: "/projects/알파" }, { kind: "load-library" }]);
 });
 

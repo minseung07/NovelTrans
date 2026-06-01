@@ -4,7 +4,7 @@ NovelTrans is a TypeScript CLI/TUI tool for translating long-form Japanese novel
 
 It is built for workflows where one source contains many episodes, repeated character names, setting terms, item names, and other glossary-sensitive text. NovelTrans keeps the source, episodes, translation state, glossary candidates, QA issues, logs, and TXT/EPUB exports together in one project directory.
 
-Version: `2.1.4`<br>
+Version: `2.1.5`<br>
 Status: initial public release
 
 ## Features
@@ -294,7 +294,7 @@ Environment name: npm
 Allowed action: npm publish
 ```
 
-The release tag must match `package.json` exactly as `v<version>`, for example `v2.1.4`.
+The release tag must match `package.json` exactly as `v<version>`, for example `v2.1.5`.
 
 Before publishing a release:
 

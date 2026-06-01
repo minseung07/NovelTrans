@@ -34,8 +34,8 @@ export type Msg =
   | { type: "glossary-op"; op: GlossaryOp }
   | { type: "glossary-edit-open" }
   | { type: "qa-op"; op: QaOp }
+  | { type: "qa-filter" }
   | { type: "qa-jump-glossary" }
-  | { type: "source-reimport" }
   | { type: "input-char"; value: string }
   | { type: "input-backspace" }
   | { type: "input-cancel" }
@@ -56,11 +56,13 @@ export type Msg =
   | { type: "library-loaded"; model: BookshelfModel }
   | { type: "config-updated"; config: NovelTransConfig }
   | { type: "action-done"; message: string; level?: Severity }
+  | { type: "glossary-action-failed"; entryId: string; message: string }
   | { type: "clear-message" }
-  | { type: "job-progress"; snapshot: TranslationSessionSnapshot }
-  | { type: "job-done"; snapshot: TranslationSessionSnapshot }
-  | { type: "job-failed"; message: string }
-  | { type: "job-clear" }
+  | { type: "job-progress"; projectDir: string; snapshot: TranslationSessionSnapshot }
+  | { type: "job-done"; projectDir: string; snapshot: TranslationSessionSnapshot }
+  | { type: "job-failed"; projectDir: string; message: string }
+  | { type: "job-clear"; projectDir: string }
   | { type: "web-import-previewed"; consent: string }
   | { type: "import-progress"; completed: number; total: number }
+  | { type: "import-job-clear" }
   | { type: "tick" };

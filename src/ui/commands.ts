@@ -47,7 +47,8 @@ export function filterPaletteCommands(query: string, hasProject: boolean): Palet
       if (!normalized) {
         return true;
       }
-      return `${command.id} ${command.label} ${command.hint}`.toLowerCase().includes(normalized);
+      const haystack = `${command.id} ${command.label} ${command.hint}`.toLowerCase();
+      return haystack.includes(normalized);
     });
   if (!normalized) {
     return commands.slice(0, 8);

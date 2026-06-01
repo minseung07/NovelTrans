@@ -397,6 +397,43 @@ test("QA recheck clears stale issues for episodes without translations", async (
   assert.equal((await readAllQAIssues(created.metadata.projectDir)).length, 0);
 });
 
+test("QA recheck preserves resolved issues that are still detected", async () => {
+  const root = await mkdtemp(join(tmpdir(), "noveltrans-resolved-qa-"));
+  const created = await createProjectFromText({
+    sourceText: ["第1話 再検査", "黒架は歩いた。"].join("\n"),
+    sourceLabel: "paste://resolved-qa-test",
+    projectRoot: join(root, "projects"),
+    name: "Resolved QA Novel",
+    backend: "dry-run",
+    model: "dry-run",
+    concurrency: 1,
+    glossaryStrictness: "high",
+    userConfirmedRights: true
+  });
+  const [episode] = await listEpisodes(created.metadata.projectDir);
+  assert.ok(episode);
+  await saveTranslation(created.metadata.projectDir, episode, {
+    episodeId: episode.id,
+    titleKo: "재검사",
+    bodyKo: "日本語가 남아 있습니다.",
+    usedGlossaryEntries: [],
+    newGlossaryCandidates: [],
+    qaIssueIds: [],
+    model: "test",
+    backend: "test",
+    createdAt: nowIso()
+  });
+
+  const firstIssues = await rerunProjectQA(created.metadata.projectDir);
+  assert.equal(firstIssues.length > 0, true);
+  await saveQAIssues(created.metadata.projectDir, episode, firstIssues.map((issue) => ({ ...issue, resolved: true })));
+
+  const secondIssues = await rerunProjectQA(created.metadata.projectDir);
+  assert.equal(secondIssues.length, firstIssues.length);
+  assert.equal(secondIssues.every((issue) => issue.resolved), true);
+  assert.equal((await readAllQAIssues(created.metadata.projectDir)).every((issue) => issue.resolved), true);
+});
+
 test("afterword sections are translated and controlled by export options", async () => {
   const root = await mkdtemp(join(tmpdir(), "noveltrans-afterword-export-"));
   const created = await createProjectFromText({

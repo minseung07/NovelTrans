@@ -25,10 +25,22 @@ export function jobPercent(job: Job): number {
   return job.queued > 0 ? Math.round((job.completed / job.queued) * 100) : job.status === "completed" ? 100 : 0;
 }
 
+export function jobKindLabel(job: Job): string {
+  const labels: Record<Job["kind"], string> = {
+    translate: "번역",
+    retry: "실패 재시도",
+    export: "내보내기",
+    "web-import": "웹 가져오기",
+    "qa-retranslate": "QA 재번역",
+    "qa-batch-retranslate": "QA 일괄 재번역"
+  };
+  return labels[job.kind];
+}
+
 export function jobSegment(job: Job, tick = 0): string {
   const spin = job.status === "running" ? `${spinnerFrame(tick)} ` : "";
   const counts = job.queued > 0 ? ` ${job.completed}/${job.queued} (${jobPercent(job)}%)` : "";
-  return `${spin}잡 ${jobStatusLabel(job.status)}${counts}`;
+  return `${spin}${jobKindLabel(job)} ${jobStatusLabel(job.status)}${counts}`;
 }
 
 function pipelineCard(project: ProjectUiModel, width: number): string[] {
@@ -56,7 +68,13 @@ function jobCard(job: Job | null, width: number): string[] {
   if (!job) {
     return box("라이브 잡", ["진행 중인 잡이 없습니다.", "[T] 번역 시작"], width);
   }
-  return box("라이브 잡", [`${jobStatusLabel(job.status)}   ${progressLine(jobPercent(job), 14)}`, `완료 ${job.completed}   대기 ${job.queued}   실패 ${job.failed}`], width);
+  const lines = [`${jobKindLabel(job)} ${jobStatusLabel(job.status)}   ${progressLine(jobPercent(job), 14)}`, `완료 ${job.completed}   대상 ${job.queued}   실패 ${job.failed}`];
+  if (job.current) {
+    lines.push(`현재 ${job.current}`);
+  } else if (job.label) {
+    lines.push(job.label);
+  }
+  return box("라이브 잡", lines, width);
 }
 
 function activityCard(project: ProjectUiModel, width: number): string[] {

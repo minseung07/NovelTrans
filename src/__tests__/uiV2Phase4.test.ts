@@ -21,8 +21,13 @@ function baseModel(): AppModel {
 }
 
 function projectFixture(): ProjectUiModel {
+  const episodes = [{ id: "e1", episodeNo: 1, title: "1화", sourceText: "日本語", body: "日本語", sourceHash: "h", metadata: {} }] as ProjectUiModel["episodes"];
+  const qaIssues = [{ id: "i1", episodeId: "e1", type: "japanese_remaining", severity: "warning", message: "일본어가 남아 있습니다.", sourceSnippet: "日本語", targetSnippet: "日本語", resolved: false, createdAt: "" }] as ProjectUiModel["qaIssues"];
   return {
     overview: { counts: { pending: 1, running: 0, completed: 2, failed: 1, skipped: 0 }, episodeStates: [{}, {}, {}, {}], metadata: { outputOptions: { formats: ["txt"], includeGlossaryAppendix: false, includeAfterword: false, verticalWriting: false } } },
+    episodes,
+    qaIssues,
+    reviewDesk: { openIssues: qaIssues, buckets: [], episodeGroups: [{ episodeId: "e1", episodeNo: 1, title: "1화", issues: qaIssues }] },
     studioQueue: { active: [{ episodeNo: 3, title: "3화", status: "running", detail: "" }], next: [], failed: [], skipped: [] },
     failureRecovery: { failedCount: 1, items: [{ episodeId: "e", episodeNo: 4, title: "4화", reason: "timeout", attempts: 1, updatedAt: "" }], logPath: "" },
     exportPreview: { title: "T", episodeCount: 4, translatedEpisodeCount: 2, glossaryAppendixCount: 0, expectedTxtPath: "/x.txt", expectedEpubPath: "/x.epub", txtExists: false, epubExists: false }
@@ -85,8 +90,12 @@ test("palette backend commands route to the intended integration effects", () =>
 
   [state] = update({ ...projectModel("qa"), overlay: { kind: "palette", query: "review-retranslate-all", selected: 0 } }, { type: "palette-run" });
   assert.equal(state.overlay?.kind === "confirm" && state.overlay.action, "review-retranslate-all");
-  const [, batchEffects] = update(state, { type: "confirm-yes" });
+  const [batchState, batchEffects] = update(state, { type: "confirm-yes" });
+  assert.equal(batchState.jobsByProjectDir["/p/a"]?.kind, "qa-batch-retranslate");
+  assert.deepEqual(batchState.jobsByProjectDir["/p/a"]?.episodeIds, ["e1"]);
+  assert.equal(batchState.message?.text.startsWith("재번역을 시작했습니다"), true);
   assert.equal(batchEffects[0]?.kind === "qa-batch-action" && batchEffects[0].scope, "all-open");
+  assert.equal(batchEffects[1]?.kind, "dismiss");
 });
 
 test("import opens an input and submits an import effect", () => {
@@ -137,11 +146,11 @@ test("export toggle and generate emit effects", () => {
 });
 
 test("job failure exposes the backend error and refreshes project and library data", () => {
-  const running: AppModel = { ...projectModel("translate"), job: { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } };
-  const [next, effects] = update(running, { type: "job-failed", message: "OPENAI_API_KEY가 설정되지 않았습니다." });
+  const running: AppModel = { ...projectModel("translate"), jobsByProjectDir: { "/p/a": { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } } };
+  const [next, effects] = update(running, { type: "job-failed", projectDir: "/p/a", message: "OPENAI_API_KEY가 설정되지 않았습니다." });
   assert.equal(next.overlay?.kind === "notice" && next.overlay.message, "OPENAI_API_KEY가 설정되지 않았습니다.");
   assert.equal(next.overlay?.kind === "notice" && next.overlay.level, "critical");
-  assert.equal(next.job?.status, "failed");
+  assert.equal(next.jobsByProjectDir["/p/a"]?.status, "failed");
   assert.deepEqual(
     effects.map((effect) => effect.kind),
     ["load-project", "load-library"]
@@ -165,16 +174,16 @@ test("settings op emits a config effect; config-updated applies", () => {
 });
 
 test("translate pause toggles between pause and resume effects by job status", () => {
-  const running: AppModel = { ...projectModel("translate"), job: { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } };
+  const running: AppModel = { ...projectModel("translate"), jobsByProjectDir: { "/p/a": { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } } };
   assert.equal(update(running, { type: "translate-pause" })[1][0]!.kind, "pause-job");
-  const paused: AppModel = { ...running, job: { ...running.job!, status: "paused" } };
+  const paused: AppModel = { ...running, jobsByProjectDir: { "/p/a": { ...running.jobsByProjectDir["/p/a"]!, status: "paused" } } };
   assert.equal(update(paused, { type: "translate-pause" })[1][0]!.kind, "resume-job");
 });
 
 test("translate cancel stops an active job and emits cancel-job", () => {
-  const running: AppModel = { ...projectModel("translate"), job: { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } };
+  const running: AppModel = { ...projectModel("translate"), jobsByProjectDir: { "/p/a": { kind: "translate", projectDir: "/p/a", status: "running", queued: 1, completed: 0, failed: 0 } } };
   const [next, effects] = update(running, { type: "translate-cancel" });
-  assert.equal(next.job?.status, "cancelled");
+  assert.equal(next.jobsByProjectDir["/p/a"]?.status, "cancelled");
   assert.equal(effects[0]?.kind, "cancel-job");
   assert.deepEqual(update(projectModel("translate"), { type: "translate-cancel" })[1], []);
 });

@@ -1,9 +1,9 @@
 // Application model. Library + Project (stage rail) routes, loaded project data,
-// a global Job, per-stage triage selections, a text-input modal, global
+// per-project Jobs, per-stage triage selections, a text-input modal, global
 // overlays (help/settings/palette/confirm), and a transient action message.
 
 import type { NovelTransConfig } from "../../domain/config.js";
-import type { BookshelfModel, GlossaryQueueFilter, ProjectUiModel } from "../../ui/types.js";
+import type { BookshelfModel, GlossaryQueueFilter, ProjectUiModel, ReviewIssueFilter } from "../../ui/types.js";
 import type { TranslationSessionStatus } from "../../engine/translationSession.js";
 import type { Severity } from "../theme/theme.js";
 
@@ -16,7 +16,7 @@ export type Stage = "overview" | "source" | "translate" | "glossary" | "qa" | "e
 
 type Route = { screen: "library" } | { screen: "project"; projectDir: string; stage: Stage };
 
-type JobKind = "translate" | "retry" | "export" | "web-import";
+type JobKind = "translate" | "retry" | "export" | "web-import" | "qa-retranslate" | "qa-batch-retranslate";
 
 export interface Job {
   kind: JobKind;
@@ -25,6 +25,9 @@ export interface Job {
   queued: number;
   completed: number;
   failed: number;
+  label?: string;
+  current?: string | null;
+  episodeIds?: string[];
 }
 
 type InputState =
@@ -47,7 +50,6 @@ export type ConfirmAction =
   | "quit"
   | "export-all"
   | "export-configured"
-  | "source-reimport"
   | "web-import"
   | "dry-run-resume"
   | "dry-run-retry"
@@ -80,11 +82,13 @@ export interface AppModel {
   selected: number;
   project: ProjectUiModel | null;
   projectLoading: boolean;
-  job: Job | null;
+  jobsByProjectDir: Record<string, Job>;
+  importJob: Job | null;
   glossarySelected: number;
   glossaryFilter: GlossaryQueueFilter;
   deferred: string[];
   qaSelected: number;
+  qaFilter: ReviewIssueFilter;
   sourceSelected: number;
   input: InputState | null;
   overlay: Overlay | null;
@@ -105,11 +109,13 @@ export function initModel(config: NovelTransConfig, library: BookshelfModel, has
     selected: 0,
     project: null,
     projectLoading: false,
-    job: null,
+    jobsByProjectDir: {},
+    importJob: null,
     glossarySelected: 0,
     glossaryFilter: "all",
     deferred: [],
     qaSelected: 0,
+    qaFilter: "all",
     sourceSelected: 0,
     input: null,
     overlay: null,

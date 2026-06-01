@@ -2,6 +2,36 @@
 
 All notable changes to NovelTrans will be documented in this file.
 
+## [Unreleased]
+
+## [2.1.5] - 2026-06-01
+
+### Added
+
+- Added v2 QA filters by issue bucket and grouped QA triage by episode, with per-episode issue counts and comparison details.
+- Added v2 QA retranslation jobs for the selected issue, same issue type, or all filtered open issues, including progress, cancellation, and current-episode feedback.
+- Added a glossary queue filter for confirmed and locked terms.
+- Added Korean two-set keyboard fallback for committed single-key v2 TUI shortcuts.
+
+### Changed
+
+- Switched v2 job tracking from a single global job to project-scoped jobs, allowing different projects to run translation jobs independently while keeping web import progress separate.
+- Moved v2 job progress out of the global status bar and into the active project workspace, with clearer job kind labels for translation, retry, export, and QA retranslation.
+- Made v2 QA actions respect the active QA filter when ignoring issues, opening translations, or retranslating batches.
+- Made glossary review queue keyboard actions remove the selected term and show completion feedback immediately while the project save refreshes in the background.
+- Changed QA recheck logging and feedback to report open issue counts separately from total detected issues.
+
+### Fixed
+
+- Preserved resolved QA issue state across QA reruns by giving detected issues stable fingerprints.
+- Hid QA issues for episodes that are currently being retranslated from the v2 QA queue, stage badge counts, and keyboard-action targets.
+- Restored optimistically hidden glossary queue terms if a background review action save fails.
+- Kept quit confirmation active for project jobs and web imports that are running or paused.
+
+### Removed
+
+- Removed the v2 Source-stage re-import shortcut and related help text.
+
 ## [2.1.4] - 2026-05-31
 
 ### Added

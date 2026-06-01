@@ -86,14 +86,26 @@ export type ProjectTimelineItem = {
 };
 
 type ReviewIssueBucket = {
-  id: string;
+  id: ReviewIssueBucketId;
   label: string;
   count: number;
+};
+
+export type ReviewIssueBucketId = "missing" | "japanese" | "names" | "terms" | "numbers" | "length" | "other";
+
+export type ReviewIssueFilter = "all" | ReviewIssueBucketId;
+
+export type ReviewEpisodeGroup = {
+  episodeId: string;
+  episodeNo: number | null;
+  title: string;
+  issues: QAIssue[];
 };
 
 export type ReviewDeskModel = {
   openIssues: QAIssue[];
   buckets: ReviewIssueBucket[];
+  episodeGroups: ReviewEpisodeGroup[];
 };
 
 export type ProjectUiModel = {
@@ -118,7 +130,7 @@ export type GlossaryQueueItem = {
   priority: number;
 };
 
-export type GlossaryQueueFilter = "all" | "conflicts" | "candidates";
+export type GlossaryQueueFilter = "all" | "conflicts" | "candidates" | "confirmed";
 
 export type PaletteCommand = {
   id: string;

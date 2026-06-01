@@ -40,7 +40,11 @@ export function projectOf(model: AppModel): BookshelfProject | null {
   return model.library.allProjects.find((project) => project.projectDir === projectDir) ?? null;
 }
 
-function stageBadge(stage: Stage, project: ProjectUiModel): RailItem["badge"] {
+function activeQaEpisodeIds(job: Job | null): string[] {
+  return job && (job.status === "running" || job.status === "paused") && (job.kind === "qa-retranslate" || job.kind === "qa-batch-retranslate") ? (job.episodeIds ?? []) : [];
+}
+
+function stageBadge(stage: Stage, project: ProjectUiModel, job: Job | null): RailItem["badge"] {
   if (stage === "source") {
     return { level: "info", text: String(project.episodes.length) };
   }
@@ -56,7 +60,8 @@ function stageBadge(stage: Stage, project: ProjectUiModel): RailItem["badge"] {
     }
   }
   if (stage === "qa") {
-    const open = project.qaIssues.filter((issue) => !issue.resolved).length;
+    const hidden = new Set(activeQaEpisodeIds(job));
+    const open = project.qaIssues.filter((issue) => !issue.resolved && !hidden.has(issue.episodeId)).length;
     if (open > 0) {
       return { level: "warning", text: String(open) };
     }
@@ -64,8 +69,8 @@ function stageBadge(stage: Stage, project: ProjectUiModel): RailItem["badge"] {
   return undefined;
 }
 
-function railItems(project: ProjectUiModel | null): RailItem[] {
-  return STAGE_ORDER.map((stage) => ({ label: STAGE_LABELS[stage], badge: project ? stageBadge(stage, project) : undefined }));
+function railItems(project: ProjectUiModel | null, job: Job | null): RailItem[] {
+  return STAGE_ORDER.map((stage) => ({ label: STAGE_LABELS[stage], badge: project ? stageBadge(stage, project, job) : undefined }));
 }
 
 function stageDetail(model: AppModel, stage: Stage, project: ProjectUiModel, job: Job | null, width: number): string[] {
@@ -79,7 +84,7 @@ function stageDetail(model: AppModel, stage: Stage, project: ProjectUiModel, job
     return renderGlossary(project, model.glossarySelected, model.glossaryFilter, model.deferred, width);
   }
   if (stage === "qa") {
-    return renderQa(project, model.qaSelected, width);
+    return renderQa(project, model.qaSelected, model.qaFilter, width, activeQaEpisodeIds(job));
   }
   if (stage === "translate") {
     return renderTranslate(project, job, width);
@@ -93,12 +98,13 @@ export function renderProject(model: AppModel, width: number, _rows: number): st
   }
   const stage = model.route.stage;
   const activeIndex = STAGE_ORDER.indexOf(stage);
-  const items = railItems(model.project);
+  const job = model.jobsByProjectDir[model.route.projectDir] ?? null;
+  const items = railItems(model.project, job);
   const narrow = width < NARROW_WIDTH;
   const detailWidth = narrow ? width : width - RAIL_WIDTH - 2;
   const detail = !model.project
     ? box(STAGE_LABELS[stage], [model.projectLoading ? "프로젝트를 불러오는 중…" : "프로젝트를 찾을 수 없습니다.", "[Esc] 책장"], detailWidth)
-    : stageDetail(model, stage, model.project, model.job, detailWidth);
+    : stageDetail(model, stage, model.project, job, detailWidth);
   if (narrow) {
     return [tabStrip(items, activeIndex, width), "", ...detail];
   }

@@ -31,6 +31,7 @@ test("source screen shows source status, warnings, and the episode list", () => 
   assert.ok(out.includes("2개 에피소드"));
   assert.ok(out.includes("첫 화"));
   assert.ok(out.includes("긴 화 주의"));
+  assert.equal(out.includes("원문 다시 가져오기"), false);
 });
 
 test("source move adjusts selection and clamps to episode bounds", () => {
@@ -38,18 +39,4 @@ test("source move adjusts selection and clamps to episode bounds", () => {
   assert.equal(m.sourceSelected, 1);
   [m] = update(m, { type: "move", delta: 5 });
   assert.equal(m.sourceSelected, 1);
-});
-
-test("re-import on a TXT source confirms, then emits an import effect", () => {
-  const [confirming] = update(model("./novel.txt"), { type: "source-reimport" });
-  assert.equal(confirming.overlay?.kind === "confirm" && confirming.overlay.action, "source-reimport");
-  const [, effects] = update(confirming, { type: "confirm-yes" });
-  assert.equal(effects[0]?.kind === "import" && effects[0].source, "./novel.txt");
-});
-
-test("re-import on a non-file source is rejected with a message", () => {
-  const [m, effects] = update(model("inline://noveltrans"), { type: "source-reimport" });
-  assert.equal(m.overlay, null);
-  assert.ok(m.message?.text.includes("로컬 TXT"));
-  assert.equal(effects[0]?.kind, "dismiss");
 });

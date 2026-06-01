@@ -3,6 +3,7 @@
 // is handled directly by the input layer and intentionally bypasses the keymap.
 
 import type { KeyEvent } from "../runtime/input.js";
+import { qwertyShortcutTokenFromKoreanPaste } from "../../utils/keyboardLayout.js";
 
 type Context = "library" | "project";
 
@@ -39,9 +40,10 @@ export function keyToken(event: KeyEvent): string {
     return event.name;
   }
   if (event.type === "char") {
-    return event.ctrl ? `ctrl+${event.value.toLowerCase()}` : event.value.toLowerCase();
+    const value = qwertyShortcutTokenFromKoreanPaste(event.value) ?? event.value.toLowerCase();
+    return event.ctrl ? `ctrl+${value}` : value;
   }
-  return "paste";
+  return qwertyShortcutTokenFromKoreanPaste(event.text) ?? "paste";
 }
 
 export function resolveAction(context: Context, token: string): Action | null {
