@@ -4,10 +4,6 @@ All notable changes to NovelTrans will be documented in this file.
 
 ## [Unreleased]
 
-### Changed
-
-- Restored npm publishing to explicit manual workflow dispatch so git tags and GitHub Releases can be created without publishing the package again.
-
 ## [2.2.0] - 2026-06-01
 
 ### Added
@@ -36,6 +32,7 @@ All notable changes to NovelTrans will be documented in this file.
 
 ### Changed
 
+- Restored npm publishing to explicit manual workflow dispatch so git tags and GitHub Releases can be created without publishing the package again.
 - Bumped package metadata, package lock, and README release examples to `2.2.0`.
 - Updated README documentation to match the current v2 TUI, CLI commands and aliases, import/export behavior, project data layout, credential notes, and npm release workflow.
 - Made translation glossary prompts build per segment/chunk so forewords, afterwords, and long body chunks receive glossary context relevant to their own source text.
